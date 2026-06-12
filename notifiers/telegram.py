@@ -10,12 +10,14 @@ logger = logging.getLogger(__name__)
 _TELEGRAM_API = "https://api.telegram.org"
 
 _OUTCOME_EMOJI: dict[str, str] = {
-    "home": "🟢",
-    "1": "🟢",
-    "draw": "🟡",
-    "x": "🟡",
-    "away": "🔴",
-    "2": "🔴",
+    # 1x2
+    "home": "🟢", "1": "🟢",
+    "draw": "🟡", "x": "🟡",
+    "away": "🔴", "2": "🔴",
+    # Over/Under
+    "over": "⬆️", "under": "⬇️",
+    # BTTS
+    "yes": "✅", "no": "❌",
 }
 
 
@@ -28,11 +30,27 @@ def _html(text: str) -> str:
     return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+_MARKET_EMOJI: dict[str, str] = {
+    "1×2":          "🏆",
+    "ambos marcan": "🥅",
+}
+
+
+def _market_header(opp: ArbOpportunity) -> str:
+    market = opp.market
+    low = market.lower()
+    if "más/menos" in low or "totals" in low:
+        return f"⚽ <b>ARBITRAJE — {_html(market)}</b>"
+    if "ambos" in low or "btts" in low:
+        return f"🥅 <b>ARBITRAJE — {_html(market)}</b>"
+    return "🏆 <b>ARBITRAJE — 1×2</b>"
+
+
 def format_alert(opp: ArbOpportunity) -> str:
     lines = [
-        "🎯 <b>ARBITRAJE DETECTADO</b>",
+        f"🎯 {_market_header(opp)}",
         "━━━━━━━━━━━━━━━━━━━━",
-        f"🏆 <b>{_html(opp.event_name)}</b>",
+        f"⚽ <b>{_html(opp.event_name)}</b>",
     ]
     if opp.league:
         lines.append(f"🏅 {_html(opp.league)}")

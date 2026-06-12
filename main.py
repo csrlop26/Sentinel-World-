@@ -8,8 +8,10 @@ import logging
 import sys
 import time
 
+from config.bookmakers import is_spain_licensed
 from config.settings import settings
 from core.fetcher import get_events, get_leagues, get_sports
+from core.fetcher_theodds import get_world_cup_events
 from core.scanner import scan
 from data.tracker import ArbitrageTracker
 from notifiers.telegram import send_alert, send_startup
@@ -34,6 +36,7 @@ def cmd_run():
     logger.info(f"  Margen mínimo   : {settings.MIN_ARB_MARGIN}%")
     logger.info(f"  Margen máximo   : {settings.MAX_ARB_MARGIN}%")
     logger.info(f"  Deporte/Liga    : {settings.SPORT_FILTER} / {settings.LEAGUE_FILTER}")
+    logger.info(f"  Filtro España   : {'✓ Solo casas DGOJ' if settings.SPAIN_ONLY else '✗ Todas las casas'}")
     logger.info(f"  Intervalo       : {settings.SCAN_INTERVAL}s")
     logger.info("=" * 55)
 
@@ -122,16 +125,79 @@ def cmd_info():
     print()
 
 
+def cmd_bookmakers():
+    """Lista todas las casas que devuelve The Odds API y marca cuáles pasan el filtro español."""
+    print(f"\n=== CASAS DE APUESTAS DISPONIBLES ===")
+    print(f"    Filtro España (SPAIN_ONLY): {'✓ ACTIVO' if settings.SPAIN_ONLY else '✗ DESACTIVADO'}\n")
+
+    if not settings.THEODDS_API_KEY:
+        print("  ERROR: THEODDS_API_KEY no configurada en .env")
+        return
+
+    try:
+        events = get_world_cup_events()
+    except Exception as e:
+        print(f"  ERROR al conectar con The Odds API: {e}")
+        return
+
+    if not events:
+        print("  Sin eventos disponibles ahora mismo.")
+        return
+
+    # Recopilar todas las casas únicas del primer evento con bookmakers
+    all_bookmakers: dict[str, str] = {}  # key → title
+    for event in events:
+        for bm in event.get("bookmakers", []):
+            key = bm.get("key", "")
+            title = bm.get("title", key)
+            if key:
+                all_bookmakers[key] = title
+        if len(all_bookmakers) >= 5:
+            break
+
+    # Usar el evento con más bookmakers para la muestra completa
+    best_event = max(events, key=lambda e: len(e.get("bookmakers", [])))
+    all_bookmakers = {
+        bm["key"]: bm.get("title", bm["key"])
+        for bm in best_event.get("bookmakers", [])
+        if bm.get("key")
+    }
+
+    spain_ok = []
+    spain_no = []
+    for key, title in sorted(all_bookmakers.items(), key=lambda x: x[1]):
+        if is_spain_licensed(title) or is_spain_licensed(key):
+            spain_ok.append((key, title))
+        else:
+            spain_no.append((key, title))
+
+    print(f"  ✅ INCLUIDAS en alertas ({len(spain_ok)} casas con licencia DGOJ):")
+    for key, title in spain_ok:
+        print(f"     • {title:25s}  [{key}]")
+
+    print(f"\n  ❌ EXCLUIDAS del filtro España ({len(spain_no)} casas sin DGOJ):")
+    for key, title in spain_no:
+        print(f"     • {title:25s}  [{key}]")
+
+    print(f"\n  Total en API: {len(all_bookmakers)} casas")
+    print(f"  Usando partido: {best_event.get('home_team')} vs {best_event.get('away_team')}\n")
+    print("  Para desactivar el filtro: SPAIN_ONLY=False en .env")
+    print("  Para añadir una casa: edita config/bookmakers.py\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Sentinel World — Arbitrage Bot")
     sub = parser.add_subparsers(dest="cmd")
     sub.add_parser("run", help="Iniciar el bot (loop continuo)")
     sub.add_parser("info", help="Mostrar deportes, ligas y eventos disponibles")
+    sub.add_parser("bookmakers", help="Ver qué casas devuelve la API y cuáles pasan el filtro España")
 
     args = parser.parse_args()
 
     if args.cmd == "info":
         cmd_info()
+    elif args.cmd == "bookmakers":
+        cmd_bookmakers()
     else:
         cmd_run()
 

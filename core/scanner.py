@@ -1,12 +1,21 @@
 import logging
 from datetime import datetime, timezone
+from typing import Callable
 
+import httpx
+
+from config.bookmakers import is_spain_licensed
 from config.settings import settings
 from core.calculator import build_legs, calculate_arb, find_best_odds
 from core.fetcher import get_arb_bets, get_event, get_events, get_odds_snapshot
 from data.models import ArbOpportunity
 
 logger = logging.getLogger(__name__)
+
+_WORLD_CUP_KEY = "soccer_fifa_world_cup"
+
+# Circuit breaker: si odds-api.net devuelve 401/403, se desactiva en toda la sesión
+_oddsnet_disabled = False
 
 
 # ── Helpers compartidos ───────────────────────────────────────────────────────
@@ -41,12 +50,19 @@ def _event_sig(opp: ArbOpportunity) -> str:
     return opp.event_name.lower().replace(" ", "").replace("_", "")
 
 
+def _bookmaker_filter() -> Callable[[str], bool] | None:
+    """Devuelve el filtro de bookmakers activo según configuración."""
+    if settings.SPAIN_ONLY:
+        return is_spain_licensed
+    return None
+
+
 def _build_opp(
     event_id: str,
     event_data: dict,
     odds_items: list[dict],
 ) -> ArbOpportunity | None:
-    best_odds = find_best_odds(odds_items)
+    best_odds = find_best_odds(odds_items, bookmaker_filter=_bookmaker_filter())
     if len(best_odds) < 2:
         return None
 
@@ -71,6 +87,7 @@ def _build_opp(
         margin_pct=round(margin_pct, 2),
         bankroll=settings.BANKROLL,
         min_profit=round(settings.BANKROLL * margin_pct / 100, 2),
+        market=event_data.get("market", "1×2"),
     )
 
 
@@ -78,35 +95,68 @@ def _build_opp(
 
 def _scan_theodds() -> list[ArbOpportunity]:
     """
-    Escanea todos los partidos del Mundial desde The Odds API.
-    Una sola llamada HTTP devuelve todos los eventos con TODOS los bookmakers.
+    Escanea todos los partidos del Mundial desde The Odds API,
+    analizando TODOS los mercados configurados (1x2, Over/Under, BTTS...).
+    Una sola llamada HTTP devuelve todo.
     """
-    from core.fetcher_theodds import get_world_cup_events, normalize_event
+    from core.fetcher_theodds import (
+        extract_event_meta,
+        extract_market_groups,
+        get_events_for_sport,
+    )
+    from config.settings import settings as s
 
-    try:
-        events = get_world_cup_events()
-    except Exception as e:
-        logger.warning(f"TheOddsAPI no disponible: {e}")
+    # Deportes a escanear: siempre el Mundial + los extra configurados
+    sport_keys = [_WORLD_CUP_KEY]
+    if s.EXTRA_SPORTS:
+        sport_keys += [sk.strip() for sk in s.EXTRA_SPORTS.split(",") if sk.strip()]
+
+    all_events: list[dict] = []
+    for sport_key in sport_keys:
+        try:
+            all_events += get_events_for_sport(sport_key)
+        except Exception as e:
+            logger.warning(f"TheOddsAPI ({sport_key}) no disponible: {e}")
+
+    if not all_events:
         return []
 
     opportunities: list[ArbOpportunity] = []
-    for event in events:
-        meta, odds_items = normalize_event(event)
-        opp = _build_opp(meta["id"], meta, odds_items)
-        if opp:
-            opportunities.append(opp)
+    markets_checked = 0
 
-    logger.info(f"TheOddsAPI → {len(events)} partidos revisados, {len(opportunities)} oportunidades")
+    for event in all_events:
+        meta = extract_event_meta(event)
+        for group_id, market_label, market_emoji, odds_items in extract_market_groups(event):
+            markets_checked += 1
+            event_id = f"{meta['id']}_{group_id}"
+            opp = _build_opp(event_id, {**meta, "market": market_label, "market_emoji": market_emoji}, odds_items)
+            if opp:
+                opportunities.append(opp)
+
+    logger.info(
+        f"TheOddsAPI → {len(all_events)} partidos · "
+        f"{markets_checked} mercados revisados · "
+        f"{len(opportunities)} oportunidades"
+    )
     return opportunities
 
 
 # ── Source B: odds-api.net ────────────────────────────────────────────────────
 
+def _is_auth_error(exc: Exception) -> bool:
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in (401, 403)
+
+
 def _scan_oddsnet() -> list[ArbOpportunity]:
     """
-    Escanea via odds-api.net: combina /bets/snapshot (señales rápidas)
-    con búsqueda directa de eventos del Mundial.
+    Escanea via odds-api.net. Si devuelve 401/403 se desactiva para toda
+    la sesión (circuit breaker) y no vuelve a intentarlo.
     """
+    global _oddsnet_disabled
+
+    if _oddsnet_disabled:
+        return []
+
     event_ids: set[str] = set()
     event_cache: dict[str, dict] = {}
 
@@ -118,6 +168,11 @@ def _scan_oddsnet() -> list[ArbOpportunity]:
                 event_ids.add(eid)
         logger.info(f"odds-api.net /bets/snapshot → {len(arb_bets)} señales en {len(event_ids)} eventos")
     except Exception as e:
+        if _is_auth_error(e):
+            _oddsnet_disabled = True
+            logger.warning("odds-api.net: key inválida (401) — desactivado para esta sesión. "
+                           "Revisa ODDS_API_KEY en .env o déjala vacía si no la usas.")
+            return []
         logger.warning(f"odds-api.net /bets/snapshot no disponible: {e}")
 
     try:
@@ -129,6 +184,10 @@ def _scan_oddsnet() -> list[ArbOpportunity]:
                 event_cache[eid] = ev
         logger.info(f"odds-api.net eventos directos → {len(events)} encontrados")
     except Exception as e:
+        if _is_auth_error(e):
+            _oddsnet_disabled = True
+            logger.warning("odds-api.net: key inválida (401) — desactivado para esta sesión.")
+            return []
         logger.warning(f"odds-api.net /events no disponible: {e}")
 
     if not event_ids:
@@ -139,6 +198,10 @@ def _scan_oddsnet() -> list[ArbOpportunity]:
         try:
             odds_items = get_odds_snapshot(eid)
         except Exception as e:
+            if _is_auth_error(e):
+                _oddsnet_disabled = True
+                logger.warning("odds-api.net: key inválida (401) — desactivado para esta sesión.")
+                return opportunities
             logger.warning(f"Odds snapshot fallido para {eid}: {e}")
             continue
 

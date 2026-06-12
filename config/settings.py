@@ -31,5 +31,15 @@ class Settings(BaseSettings):
     SPORT_FILTER: str = "soccer"
     LEAGUE_FILTER: str = "world cup"
 
+    # Solo casas con licencia DGOJ activa en España (True = activado)
+    SPAIN_ONLY: bool = True
+
+    # Mercados a escanear (h2h=resultado, totals=más/menos goles, btts=ambos marcan)
+    MARKETS: str = "h2h,totals,btts"
+
+    # Deportes adicionales más allá del Mundial (separados por coma, vacío = solo fútbol WC)
+    # Ejemplo: "tennis_atp_wimbledon,basketball_nba"
+    EXTRA_SPORTS: str = ""
+
 
 settings = Settings()
