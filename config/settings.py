@@ -31,5 +31,8 @@ class Settings(BaseSettings):
     SPORT_FILTER: str = "soccer"
     LEAGUE_FILTER: str = "world cup"
 
+    # Solo casas con licencia DGOJ activa en España (True = activado)
+    SPAIN_ONLY: bool = True
+
 
 settings = Settings()

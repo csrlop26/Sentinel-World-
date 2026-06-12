@@ -1,13 +1,19 @@
+from typing import Callable
+
 from data.models import ArbLeg
 
 # Market keys treated as main 1x2 / moneyline market
 _MAIN_MARKETS = {"moneyline", "h2h", "1x2", "match_winner", "winner"}
 
 
-def find_best_odds(odds_items: list[dict]) -> dict[str, tuple[str, float]]:
+def find_best_odds(
+    odds_items: list[dict],
+    bookmaker_filter: Callable[[str], bool] | None = None,
+) -> dict[str, tuple[str, float]]:
     """
-    Returns {outcome_name: (bookmaker, best_odds)} across all available bookmakers.
+    Returns {outcome_name: (bookmaker, best_odds)} across available bookmakers.
     Only considers the main 1x2 / moneyline market.
+    If bookmaker_filter is provided, only includes bookmakers that pass it.
     """
     best: dict[str, tuple[str, float]] = {}
 
@@ -36,6 +42,9 @@ def find_best_odds(odds_items: list[dict]) -> dict[str, tuple[str, float]]:
             continue
 
         if not outcome or not bookmaker or odds <= 1.0:
+            continue
+
+        if bookmaker_filter and not bookmaker_filter(bookmaker):
             continue
 
         if outcome not in best or odds > best[outcome][1]:

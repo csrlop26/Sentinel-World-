@@ -1,8 +1,10 @@
 import logging
 from datetime import datetime, timezone
+from typing import Callable
 
 import httpx
 
+from config.bookmakers import is_spain_licensed
 from config.settings import settings
 from core.calculator import build_legs, calculate_arb, find_best_odds
 from core.fetcher import get_arb_bets, get_event, get_events, get_odds_snapshot
@@ -46,12 +48,19 @@ def _event_sig(opp: ArbOpportunity) -> str:
     return opp.event_name.lower().replace(" ", "").replace("_", "")
 
 
+def _bookmaker_filter() -> Callable[[str], bool] | None:
+    """Devuelve el filtro de bookmakers activo según configuración."""
+    if settings.SPAIN_ONLY:
+        return is_spain_licensed
+    return None
+
+
 def _build_opp(
     event_id: str,
     event_data: dict,
     odds_items: list[dict],
 ) -> ArbOpportunity | None:
-    best_odds = find_best_odds(odds_items)
+    best_odds = find_best_odds(odds_items, bookmaker_filter=_bookmaker_filter())
     if len(best_odds) < 2:
         return None
 
