@@ -1,0 +1,40 @@
+# ── Secretos y configuración privada ─────────────────────────────────────────
+.env
+.env.local
+.env.production
+.env.staging
+# .env.enc NO está aquí → puede subirse al repo (está cifrado y es opcional)
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+.Python
+
+# ── Claves y certificados ─────────────────────────────────────────────────────
+*.key
+*.pem
+*.p12
+*.pfx
+credentials.json
+secrets.json
+service_account.json
+token.json
+
+# ── Logs y datos locales ──────────────────────────────────────────────────────
+sentinel.log
+*.log
+data/seen_opportunities.json
+
+# ── IDEs ──────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo

@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Sentinel World — hook de seguridad pre-commit
+# Bloquea el commit si detecta secretos o archivos .env en los cambios staged.
+# Activado automáticamente por update.bat via: git config core.hooksPath .githooks
+
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+BLOCKED=0
+
+# ── Regla 1: Bloquear archivos .env (nunca al repo, salvo .example y .enc) ───
+ENV_STAGED=$(git diff --cached --name-only 2>/dev/null \
+    | grep -E '(^|/)\.env(\.|$)' \
+    | grep -iv 'example\|sample\|template\|enc' || true)
+
+if [ -n "$ENV_STAGED" ]; then
+    echo ""
+    echo -e "${RED}🚨 BLOQUEADO — archivo .env detectado en el commit:${NC}"
+    while IFS= read -r line; do
+        echo -e "${YELLOW}   → $line${NC}"
+    done <<< "$ENV_STAGED"
+    BLOCKED=1
+fi
+
+# ── Regla 2: Detectar patrones de secretos en líneas añadidas ────────────────
+DIFF=$(git diff --cached --unified=0 2>/dev/null \
+    | grep '^+' | grep -v '^+++' | tr -d '\r' || true)
+
+# Telegram bot token: 8-12 dígitos : 35+ caracteres
+MATCH_TG=$(echo "$DIFF" \
+    | grep -E '[0-9]{8,12}:[A-Za-z0-9_-]{35,}' \
+    | grep -iv 'your_\|example\|placeholder\|here' || true)
+
+# Asignaciones de API keys con valores reales (no placeholders)
+MATCH_KEY=$(echo "$DIFF" \
+    | grep -E '(ODDS_API_KEY|THEODDS_API_KEY|BOT_TOKEN|ACCESS_TOKEN|SECRET_KEY)\s*=\s*[a-zA-Z0-9_-]{15,}' \
+    | grep -iv 'your_\|example\|placeholder\|here\|test\|fake' || true)
+
+# Chat ID de Telegram (número real, no placeholder)
+MATCH_CHAT=$(echo "$DIFF" \
+    | grep -E 'TELEGRAM_CHAT_ID\s*=\s*-?[0-9]{5,}' || true)
+
+if [ -n "$MATCH_TG" ]; then
+    echo ""
+    echo -e "${RED}🚨 BLOQUEADO — posible Telegram Bot Token detectado${NC}"
+    BLOCKED=1
+fi
+
+if [ -n "$MATCH_KEY" ]; then
+    echo ""
+    echo -e "${RED}🚨 BLOQUEADO — posible API key detectada${NC}"
+    echo "$MATCH_KEY" | head -3 | sed 's/=.*/=[*** OCULTADO ***]/' \
+        | while IFS= read -r line; do echo -e "${YELLOW}   $line${NC}"; done
+    BLOCKED=1
+fi
+
+if [ -n "$MATCH_CHAT" ]; then
+    echo ""
+    echo -e "${RED}🚨 BLOQUEADO — posible Telegram Chat ID detectado${NC}"
+    BLOCKED=1
+fi
+
+# ── Resultado ─────────────────────────────────────────────────────────────────
+if [ "$BLOCKED" -eq 1 ]; then
+    echo ""
+    echo -e "${RED}  ✗ COMMIT CANCELADO — datos privados detectados${NC}"
+    echo -e "${YELLOW}  Los secretos deben estar SOLO en .env (nunca en el repo público)${NC}"
+    echo ""
+    exit 1
+fi
+
+echo -e "${GREEN}  ✓ Comprobación de seguridad OK${NC}"
+exit 0
