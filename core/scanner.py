@@ -102,12 +102,15 @@ def _scan_theodds() -> list[ArbOpportunity]:
     from core.fetcher_theodds import (
         extract_event_meta,
         extract_market_groups,
+        find_world_cup_key,
         get_events_for_sport,
     )
     from config.settings import settings as s
 
-    # Deportes a escanear: siempre el Mundial + los extra configurados
-    sport_keys = [_WORLD_CUP_KEY]
+    # Usar el sport key configurado o el descubierto automáticamente
+    wc_key = find_world_cup_key() if settings.THEODDS_API_KEY else _WORLD_CUP_KEY
+
+    sport_keys = [wc_key]
     if s.EXTRA_SPORTS:
         sport_keys += [sk.strip() for sk in s.EXTRA_SPORTS.split(",") if sk.strip()]
 
@@ -233,10 +236,10 @@ def scan_middles() -> list[MiddleOpportunity]:
     if not settings.THEODDS_API_KEY:
         return []
 
-    from core.fetcher_theodds import get_events_for_sport
+    from core.fetcher_theodds import find_world_cup_key, get_events_for_sport
     from core.middles import find_middles
 
-    sport_keys = [_WORLD_CUP_KEY]
+    sport_keys = [find_world_cup_key()]
     if settings.EXTRA_SPORTS:
         sport_keys += [sk.strip() for sk in settings.EXTRA_SPORTS.split(",") if sk.strip()]
 

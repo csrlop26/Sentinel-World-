@@ -24,6 +24,9 @@ _WORLD_CUP_KEY = "soccer_fifa_world_cup"
 # Caché en memoria: {cache_key: (timestamp_float, data)}
 _cache: dict[str, tuple[float, list]] = {}
 
+# Mercados que funcionan por sport_key (descubiertos en runtime para evitar 422)
+_working_markets: dict[str, str] = {}
+
 # Etiquetas legibles por mercado
 _MARKET_LABELS: dict[str, str] = {
     "h2h":   "1×2",
@@ -36,6 +39,9 @@ MARKET_EMOJIS: dict[str, str] = {
     "totals": "⚽",
     "btts":   "🥅",
 }
+
+# Orden de fallback si los mercados configurados dan 422
+_MARKET_FALLBACKS = ["h2h,totals,btts", "h2h,totals", "h2h"]
 
 
 def _cached_get(url: str, params: dict, ttl_seconds: int) -> list:
@@ -60,18 +66,56 @@ def _cached_get(url: str, params: dict, ttl_seconds: int) -> list:
 
 
 def get_events_for_sport(sport_key: str) -> list[dict]:
-    """Devuelve todos los eventos de un deporte con cuotas de todos los mercados configurados."""
+    """
+    Devuelve todos los eventos de un deporte con cuotas.
+    Si los mercados configurados dan 422 (no soportados), reintenta
+    automáticamente con combinaciones más simples para no gastar cuota extra.
+    El mercado que funciona se guarda en memoria para el resto de la sesión.
+    """
     if not settings.THEODDS_API_KEY:
         return []
 
-    params = {
-        "apiKey": settings.THEODDS_API_KEY,
-        "regions": settings.THEODDS_REGIONS,
-        "markets": settings.MARKETS,
-        "oddsFormat": "decimal",
-    }
     ttl = settings.THEODDS_CACHE_MINUTES * 60
-    return _cached_get(f"{_BASE}/sports/{sport_key}/odds/", params, ttl)
+    url = f"{_BASE}/sports/{sport_key}/odds/"
+    configured = settings.MARKETS
+
+    # Si ya descubrimos qué mercados soporta este deporte, usarlos directamente
+    if sport_key in _working_markets:
+        markets_to_try = [_working_markets[sport_key]]
+    else:
+        # Probar los configurados; si dan 422, ir reduciendo
+        markets_to_try = [configured]
+        for fb in _MARKET_FALLBACKS:
+            if fb != configured and fb not in markets_to_try:
+                markets_to_try.append(fb)
+
+    for markets in markets_to_try:
+        params = {
+            "apiKey": settings.THEODDS_API_KEY,
+            "regions": settings.THEODDS_REGIONS,
+            "markets": markets,
+            "oddsFormat": "decimal",
+        }
+        try:
+            data = _cached_get(url, params, ttl)
+            if markets != configured:
+                logger.info(
+                    f"TheOddsAPI: '{sport_key}' no soporta '{configured}' — "
+                    f"usando mercados '{markets}'"
+                )
+            _working_markets[sport_key] = markets
+            return data
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 422:
+                logger.warning(
+                    f"TheOddsAPI 422 con markets='{markets}' para '{sport_key}'"
+                    + (" — reintentando sin btts" if "btts" in markets else "")
+                )
+                continue
+            raise
+
+    logger.warning(f"TheOddsAPI: sin mercados disponibles para '{sport_key}'")
+    return []
 
 
 def get_world_cup_events() -> list[dict]:
@@ -86,6 +130,32 @@ def get_theodds_sports() -> list[dict]:
         resp = client.get(f"{_BASE}/sports/", params=params)
         resp.raise_for_status()
         return resp.json()
+
+
+def get_active_soccer_sports() -> list[dict]:
+    """Devuelve los deportes de fútbol activos según The Odds API."""
+    sports = get_theodds_sports()
+    return [
+        s for s in sports
+        if (s.get("group") or "").lower() == "soccer"
+    ]
+
+
+def find_world_cup_key() -> str:
+    """
+    Busca el sport key correcto del Mundial entre los deportes activos.
+    Devuelve 'soccer_fifa_world_cup' como fallback si no lo encuentra.
+    """
+    try:
+        sports = get_active_soccer_sports()
+        for s in sports:
+            key = s.get("key", "")
+            title = (s.get("title") or "").lower()
+            if "world cup" in title or "world_cup" in key or "fifa_world" in key:
+                return key
+    except Exception as e:
+        logger.warning(f"Error buscando sport key del Mundial: {e}")
+    return _WORLD_CUP_KEY
 
 
 # ── Normalización ─────────────────────────────────────────────────────────────

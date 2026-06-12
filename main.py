@@ -206,12 +206,48 @@ def cmd_bookmakers():
     print("  Para añadir una casa: edita config/bookmakers.py\n")
 
 
+def cmd_sports():
+    """Lista los deportes activos de The Odds API, resaltando los de fútbol."""
+    from core.fetcher_theodds import find_world_cup_key, get_theodds_sports
+
+    if not settings.THEODDS_API_KEY:
+        print("  ERROR: THEODDS_API_KEY no configurada en .env")
+        return
+
+    print("\n=== DEPORTES DISPONIBLES EN THE ODDS API ===\n")
+    try:
+        sports = get_theodds_sports()
+    except Exception as e:
+        print(f"  ERROR: {e}")
+        return
+
+    wc_key = find_world_cup_key()
+
+    soccer = [s for s in sports if (s.get("group") or "").lower() == "soccer"]
+    other  = [s for s in sports if (s.get("group") or "").lower() != "soccer"]
+
+    print(f"  ⚽ Fútbol ({len(soccer)} competiciones):")
+    for s in soccer:
+        active = "✅" if s.get("active") else "💤"
+        wc     = " ← MUNDIAL DETECTADO" if s["key"] == wc_key else ""
+        print(f"     {active} {s.get('title', '?'):35s}  [{s['key']}]{wc}")
+
+    print(f"\n  🏅 Otros deportes ({len(other)} total — muestra de los activos):")
+    for s in [x for x in other if x.get("active")][:15]:
+        grp = s.get("group", "?")
+        print(f"     ✅ [{grp:20s}] {s.get('title', '?'):30s}  [{s['key']}]")
+
+    print(f"\n  ℹ️  Key del Mundial en uso: {wc_key}")
+    print("  Para escanear un deporte extra: EXTRA_SPORTS=<key> en .env\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Sentinel World — Arbitrage Bot")
     sub = parser.add_subparsers(dest="cmd")
-    sub.add_parser("run", help="Iniciar el bot (loop continuo)")
-    sub.add_parser("info", help="Mostrar deportes, ligas y eventos disponibles")
-    sub.add_parser("bookmakers", help="Ver qué casas devuelve la API y cuáles pasan el filtro España")
+    sub.add_parser("run",         help="Iniciar el bot (loop continuo)")
+    sub.add_parser("info",        help="Mostrar deportes, ligas y eventos disponibles")
+    sub.add_parser("bookmakers",  help="Ver qué casas devuelve la API y cuáles pasan el filtro España")
+    sub.add_parser("sports",      help="Listar deportes activos en The Odds API")
 
     args = parser.parse_args()
 
@@ -219,6 +255,8 @@ def main():
         cmd_info()
     elif args.cmd == "bookmakers":
         cmd_bookmakers()
+    elif args.cmd == "sports":
+        cmd_sports()
     else:
         cmd_run()
 
