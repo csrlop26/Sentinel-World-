@@ -9,6 +9,8 @@ from data.models import ArbOpportunity
 logger = logging.getLogger(__name__)
 
 
+# ── Helpers compartidos ───────────────────────────────────────────────────────
+
 def _matches_league_filter(event: dict) -> bool:
     if not settings.LEAGUE_FILTER:
         return True
@@ -34,16 +36,16 @@ def _commence_time(event: dict) -> str:
     return str(ts)[:19] if ts else ""
 
 
-def _check_event(event_id: str, event_data: dict | None) -> ArbOpportunity | None:
-    try:
-        odds_items = get_odds_snapshot(event_id)
-    except Exception as e:
-        logger.warning(f"Odds snapshot failed for {event_id}: {e}")
-        return None
+def _event_sig(opp: ArbOpportunity) -> str:
+    """Firma normalizada para deduplicar el mismo partido entre fuentes distintas."""
+    return opp.event_name.lower().replace(" ", "").replace("_", "")
 
-    if not odds_items:
-        return None
 
+def _build_opp(
+    event_id: str,
+    event_data: dict,
+    odds_items: list[dict],
+) -> ArbOpportunity | None:
     best_odds = find_best_odds(odds_items)
     if len(best_odds) < 2:
         return None
@@ -52,74 +54,137 @@ def _check_event(event_id: str, event_data: dict | None) -> ArbOpportunity | Non
 
     if margin_pct < settings.MIN_ARB_MARGIN:
         return None
-
     if margin_pct > settings.MAX_ARB_MARGIN:
-        logger.warning(f"Suspicious margin {margin_pct:.2f}% on {event_id} — skipping")
+        logger.warning(f"Margen sospechoso {margin_pct:.2f}% en {event_id} — ignorado")
         return None
-
-    if not event_data:
-        try:
-            event_data = get_event(event_id)
-        except Exception:
-            event_data = {"id": event_id}
-
-    legs = build_legs(stakes)
 
     return ArbOpportunity(
         event_id=event_id,
         event_name=_event_name(event_data),
         sport=event_data.get("sport") or settings.SPORT_FILTER,
         league=event_data.get("league") or "",
-        commence_time=_commence_time(event_data),
-        legs=legs,
+        commence_time=(
+            event_data.get("commence_time")
+            or _commence_time(event_data)
+        ),
+        legs=build_legs(stakes),
         margin_pct=round(margin_pct, 2),
         bankroll=settings.BANKROLL,
         min_profit=round(settings.BANKROLL * margin_pct / 100, 2),
     )
 
 
-def scan() -> list[ArbOpportunity]:
+# ── Source A: The Odds API ────────────────────────────────────────────────────
+
+def _scan_theodds() -> list[ArbOpportunity]:
     """
-    Main scan: combines /bets/snapshot (fast arb flags) with direct event scanning.
-    Returns list of confirmed arb opportunities above MIN_ARB_MARGIN.
+    Escanea todos los partidos del Mundial desde The Odds API.
+    Una sola llamada HTTP devuelve todos los eventos con TODOS los bookmakers.
+    """
+    from core.fetcher_theodds import get_world_cup_events, normalize_event
+
+    try:
+        events = get_world_cup_events()
+    except Exception as e:
+        logger.warning(f"TheOddsAPI no disponible: {e}")
+        return []
+
+    opportunities: list[ArbOpportunity] = []
+    for event in events:
+        meta, odds_items = normalize_event(event)
+        opp = _build_opp(meta["id"], meta, odds_items)
+        if opp:
+            opportunities.append(opp)
+
+    logger.info(f"TheOddsAPI → {len(events)} partidos revisados, {len(opportunities)} oportunidades")
+    return opportunities
+
+
+# ── Source B: odds-api.net ────────────────────────────────────────────────────
+
+def _scan_oddsnet() -> list[ArbOpportunity]:
+    """
+    Escanea via odds-api.net: combina /bets/snapshot (señales rápidas)
+    con búsqueda directa de eventos del Mundial.
     """
     event_ids: set[str] = set()
     event_cache: dict[str, dict] = {}
 
-    # ── Strategy 1: grab pre-flagged arb bets from the API ──────────────────
     try:
         arb_bets = get_arb_bets()
         for bet in arb_bets:
             eid = bet.get("event_id")
             if eid:
                 event_ids.add(eid)
-        logger.info(f"/bets/snapshot returned {len(arb_bets)} legs on {len(event_ids)} events")
+        logger.info(f"odds-api.net /bets/snapshot → {len(arb_bets)} señales en {len(event_ids)} eventos")
     except Exception as e:
-        logger.warning(f"/bets/snapshot unavailable: {e}")
+        logger.warning(f"odds-api.net /bets/snapshot no disponible: {e}")
 
-    # ── Strategy 2: scan configured sport/league directly ───────────────────
     try:
-        events = get_events(
-            sport=settings.SPORT_FILTER,
-            league=settings.LEAGUE_FILTER,
-        )
+        events = get_events(sport=settings.SPORT_FILTER, league=settings.LEAGUE_FILTER)
         for ev in events:
             eid = ev.get("id")
             if eid and _matches_league_filter(ev):
                 event_ids.add(eid)
                 event_cache[eid] = ev
-        logger.info(f"Direct event scan found {len(events)} events matching filter")
+        logger.info(f"odds-api.net eventos directos → {len(events)} encontrados")
     except Exception as e:
-        logger.warning(f"Event list unavailable: {e}")
+        logger.warning(f"odds-api.net /events no disponible: {e}")
 
     if not event_ids:
-        logger.info("No events to check")
         return []
 
     opportunities: list[ArbOpportunity] = []
     for eid in event_ids:
-        opp = _check_event(eid, event_cache.get(eid))
+        try:
+            odds_items = get_odds_snapshot(eid)
+        except Exception as e:
+            logger.warning(f"Odds snapshot fallido para {eid}: {e}")
+            continue
+
+        if not odds_items:
+            continue
+
+        ev_data = event_cache.get(eid)
+        if not ev_data:
+            try:
+                ev_data = get_event(eid)
+            except Exception:
+                ev_data = {"id": eid}
+
+        opp = _build_opp(eid, ev_data, odds_items)
         if opp:
             opportunities.append(opp)
+
+    logger.info(f"odds-api.net → {len(event_ids)} eventos revisados, {len(opportunities)} oportunidades")
+    return opportunities
+
+
+# ── Scan principal ────────────────────────────────────────────────────────────
+
+def scan() -> list[ArbOpportunity]:
+    """
+    Escaneo combinado de ambas fuentes.
+    The Odds API va primero (más bookmakers). Las oportunidades de odds-api.net
+    se añaden solo si no se detectó ya el mismo partido desde The Odds API.
+    """
+    opportunities: list[ArbOpportunity] = []
+    seen_sigs: set[str] = set()
+
+    # ── The Odds API (fuente principal si está configurada) ──────────────────
+    if settings.THEODDS_API_KEY:
+        for opp in _scan_theodds():
+            sig = _event_sig(opp)
+            opportunities.append(opp)
+            seen_sigs.add(sig)
+    else:
+        logger.info("TheOddsAPI no configurada — usando solo odds-api.net")
+
+    # ── odds-api.net (complemento / fallback) ────────────────────────────────
+    for opp in _scan_oddsnet():
+        sig = _event_sig(opp)
+        if sig not in seen_sigs:          # evita doble alerta del mismo partido
+            opportunities.append(opp)
+            seen_sigs.add(sig)
 
     return opportunities

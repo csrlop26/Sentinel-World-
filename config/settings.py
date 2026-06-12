@@ -8,9 +8,14 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    # Odds API
+    # odds-api.net
     ODDS_API_KEY: str
     ODDS_API_BASE_URL: str = "https://api.odds-api.net/v1"
+
+    # The Odds API (the-odds-api.com) — opcional, amplía cobertura de bookmakers
+    THEODDS_API_KEY: str = ""
+    THEODDS_REGIONS: str = "eu,uk"          # eu,uk,us,au — más regiones = más cuota usada
+    THEODDS_CACHE_MINUTES: int = 10         # caché para no agotar las 500 req/mes gratis
 
     # Telegram
     TELEGRAM_BOT_TOKEN: str
