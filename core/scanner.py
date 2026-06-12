@@ -1,12 +1,17 @@
 import logging
 from datetime import datetime, timezone
 
+import httpx
+
 from config.settings import settings
 from core.calculator import build_legs, calculate_arb, find_best_odds
 from core.fetcher import get_arb_bets, get_event, get_events, get_odds_snapshot
 from data.models import ArbOpportunity
 
 logger = logging.getLogger(__name__)
+
+# Circuit breaker: si odds-api.net devuelve 401/403, se desactiva en toda la sesión
+_oddsnet_disabled = False
 
 
 # ── Helpers compartidos ───────────────────────────────────────────────────────
@@ -102,11 +107,20 @@ def _scan_theodds() -> list[ArbOpportunity]:
 
 # ── Source B: odds-api.net ────────────────────────────────────────────────────
 
+def _is_auth_error(exc: Exception) -> bool:
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in (401, 403)
+
+
 def _scan_oddsnet() -> list[ArbOpportunity]:
     """
-    Escanea via odds-api.net: combina /bets/snapshot (señales rápidas)
-    con búsqueda directa de eventos del Mundial.
+    Escanea via odds-api.net. Si devuelve 401/403 se desactiva para toda
+    la sesión (circuit breaker) y no vuelve a intentarlo.
     """
+    global _oddsnet_disabled
+
+    if _oddsnet_disabled:
+        return []
+
     event_ids: set[str] = set()
     event_cache: dict[str, dict] = {}
 
@@ -118,6 +132,11 @@ def _scan_oddsnet() -> list[ArbOpportunity]:
                 event_ids.add(eid)
         logger.info(f"odds-api.net /bets/snapshot → {len(arb_bets)} señales en {len(event_ids)} eventos")
     except Exception as e:
+        if _is_auth_error(e):
+            _oddsnet_disabled = True
+            logger.warning("odds-api.net: key inválida (401) — desactivado para esta sesión. "
+                           "Revisa ODDS_API_KEY en .env o déjala vacía si no la usas.")
+            return []
         logger.warning(f"odds-api.net /bets/snapshot no disponible: {e}")
 
     try:
@@ -129,6 +148,10 @@ def _scan_oddsnet() -> list[ArbOpportunity]:
                 event_cache[eid] = ev
         logger.info(f"odds-api.net eventos directos → {len(events)} encontrados")
     except Exception as e:
+        if _is_auth_error(e):
+            _oddsnet_disabled = True
+            logger.warning("odds-api.net: key inválida (401) — desactivado para esta sesión.")
+            return []
         logger.warning(f"odds-api.net /events no disponible: {e}")
 
     if not event_ids:
@@ -139,6 +162,10 @@ def _scan_oddsnet() -> list[ArbOpportunity]:
         try:
             odds_items = get_odds_snapshot(eid)
         except Exception as e:
+            if _is_auth_error(e):
+                _oddsnet_disabled = True
+                logger.warning("odds-api.net: key inválida (401) — desactivado para esta sesión.")
+                return opportunities
             logger.warning(f"Odds snapshot fallido para {eid}: {e}")
             continue
 
