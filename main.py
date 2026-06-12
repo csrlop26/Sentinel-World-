@@ -14,7 +14,14 @@ from core.fetcher import get_events, get_leagues, get_sports
 from core.fetcher_theodds import get_world_cup_events
 from core.scanner import scan, scan_middles
 from data.tracker import ArbitrageTracker
-from notifiers.telegram import send_alert, send_middle_alert, send_startup
+from notifiers.telegram import (
+    check_commands,
+    init_command_polling,
+    send_alert,
+    send_middle_alert,
+    send_startup,
+    send_text,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,6 +32,62 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger("sentinel")
+
+
+def _handle_command(cmd: str, tracker: "ArbitrageTracker") -> None:
+    """Ejecuta un comando recibido por Telegram."""
+    if cmd == "/middle":
+        send_text("🔍 <i>Buscando middles ahora mismo...</i>")
+        middles = scan_middles()
+        if not middles:
+            send_text("ℹ️ No hay middles disponibles en este momento.")
+            logger.info("Comando /middle — sin resultados")
+            return
+        for mid in middles:
+            send_middle_alert(mid)
+            logger.info(
+                f"MIDDLE (manual) | {mid.event_name}"
+                f" | Over {mid.over_line} + Under {mid.under_line}"
+            )
+        send_text(f"✅ <b>{len(middles)} middle(s) encontrados.</b>")
+
+    elif cmd == "/arb":
+        send_text("🔍 <i>Forzando escaneo de arbitrajes...</i>")
+        opportunities = scan()
+        new_opps = [o for o in opportunities if not tracker.seen(o)]
+        if not new_opps:
+            send_text(
+                f"ℹ️ Sin arbitrajes nuevos ahora mismo "
+                f"({len(opportunities)} revisados)."
+            )
+        for opp in new_opps:
+            ok = send_alert(opp)
+            if ok:
+                tracker.mark_seen(opp)
+
+    elif cmd == "/status":
+        from core.fetcher_theodds import _working_markets, _WORLD_CUP_KEY
+        wc = list(_working_markets.keys()) or [_WORLD_CUP_KEY]
+        send_text(
+            "📊 <b>Estado del bot</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"💶 Bankroll: €{settings.BANKROLL:.2f}\n"
+            f"📊 Margen mín: {settings.MIN_ARB_MARGIN}%\n"
+            f"🏆 Deporte: {settings.LEAGUE_FILTER or settings.SPORT_FILTER}\n"
+            f"🔑 Filtro DGOJ: {'✓' if settings.SPAIN_ONLY else '✗'}\n"
+            f"⏱ Intervalo: {settings.SCAN_INTERVAL}s\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "📨 /middle · /arb · /status"
+        )
+
+    else:
+        send_text(
+            f"❓ Comando no reconocido: <code>{cmd}</code>\n\n"
+            "Comandos disponibles:\n"
+            "  /middle — buscar ventanas de goles\n"
+            "  /arb    — forzar escaneo de arbitrajes\n"
+            "  /status — ver estado del bot"
+        )
 
 
 def cmd_run():
@@ -40,6 +103,7 @@ def cmd_run():
     logger.info(f"  Intervalo       : {settings.SCAN_INTERVAL}s")
     logger.info("=" * 55)
 
+    init_command_polling()
     send_startup()
     tracker = ArbitrageTracker()
 
@@ -51,7 +115,12 @@ def cmd_run():
         logger.info(f"--- Scan #{scan_n} ---")
 
         try:
-            # ── Arbitrajes garantizados ─────────────────────────────────────
+            # ── Comandos del usuario vía Telegram ───────────────────────────
+            for cmd in check_commands():
+                logger.info(f"Comando recibido: {cmd}")
+                _handle_command(cmd, tracker)
+
+            # ── Arbitrajes garantizados (automáticos) ───────────────────────
             opportunities = scan()
             new_opps = [o for o in opportunities if not tracker.seen(o)]
 
@@ -66,28 +135,8 @@ def cmd_run():
                         f" | ganancia ≥ +€{opp.min_profit:.2f}"
                     )
 
-            # ── Middles (apuestas de ventana) ───────────────────────────────
-            middles = scan_middles()
-            new_middles = [m for m in middles if not tracker.seen(m)]
-
-            for mid in new_middles:
-                ok = send_middle_alert(mid)
-                if ok:
-                    tracker.mark_seen(mid)
-                    total_alerts += 1
-                    logger.info(
-                        f"MIDDLE ENVIADO | {mid.event_name}"
-                        f" | Over {mid.over_line} + Under {mid.under_line}"
-                        f" | middle = {mid.middle_goal} goles"
-                        f" | ganancia si acierta: +€{mid.both_win_profit:.2f}"
-                    )
-
-            total_new = len(new_opps) + len(new_middles)
-            if not total_new:
-                logger.info(
-                    f"Sin oportunidades nuevas "
-                    f"(arb: {len(opportunities)}, middles: {len(middles)})"
-                )
+            if not new_opps:
+                logger.info(f"Sin arbitrajes nuevos (evaluados: {len(opportunities)})")
 
         except KeyboardInterrupt:
             logger.info("Detenido por el usuario (Ctrl+C)")
