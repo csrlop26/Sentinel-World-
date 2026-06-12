@@ -8,8 +8,8 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    # odds-api.net
-    ODDS_API_KEY: str
+    # odds-api.net (opcional — dejar vacío si no se usa)
+    ODDS_API_KEY: str = ""
     ODDS_API_BASE_URL: str = "https://api.odds-api.net/v1"
 
     # The Odds API (the-odds-api.com) — opcional, amplía cobertura de bookmakers

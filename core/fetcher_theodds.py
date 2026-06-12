@@ -141,20 +141,29 @@ def get_active_soccer_sports() -> list[dict]:
     ]
 
 
+_wc_key_cache: str | None = None
+
+
 def find_world_cup_key() -> str:
     """
     Busca el sport key correcto del Mundial entre los deportes activos.
-    Devuelve 'soccer_fifa_world_cup' como fallback si no lo encuentra.
+    El resultado se cachea en memoria — solo llama a /sports/ una vez por sesión.
     """
+    global _wc_key_cache
+    if _wc_key_cache:
+        return _wc_key_cache
     try:
         sports = get_active_soccer_sports()
         for s in sports:
             key = s.get("key", "")
             title = (s.get("title") or "").lower()
             if "world cup" in title or "world_cup" in key or "fifa_world" in key:
+                logger.info(f"TheOddsAPI: Mundial detectado como '{key}' ({s.get('title')})")
+                _wc_key_cache = key
                 return key
     except Exception as e:
         logger.warning(f"Error buscando sport key del Mundial: {e}")
+    _wc_key_cache = _WORLD_CUP_KEY
     return _WORLD_CUP_KEY
 
 
