@@ -12,9 +12,9 @@ from config.bookmakers import is_spain_licensed
 from config.settings import settings
 from core.fetcher import get_events, get_leagues, get_sports
 from core.fetcher_theodds import get_world_cup_events
-from core.scanner import scan
+from core.scanner import scan, scan_middles
 from data.tracker import ArbitrageTracker
-from notifiers.telegram import send_alert, send_startup
+from notifiers.telegram import send_alert, send_middle_alert, send_startup
 
 logging.basicConfig(
     level=logging.INFO,
@@ -51,6 +51,7 @@ def cmd_run():
         logger.info(f"--- Scan #{scan_n} ---")
 
         try:
+            # ── Arbitrajes garantizados ─────────────────────────────────────
             opportunities = scan()
             new_opps = [o for o in opportunities if not tracker.seen(o)]
 
@@ -60,13 +61,33 @@ def cmd_run():
                     tracker.mark_seen(opp)
                     total_alerts += 1
                     logger.info(
-                        f"ALERTA ENVIADA | {opp.event_name}"
+                        f"ARB ENVIADO | {opp.event_name}"
                         f" | +{opp.margin_pct:.2f}%"
                         f" | ganancia ≥ +€{opp.min_profit:.2f}"
                     )
 
-            if not new_opps:
-                logger.info(f"Sin oportunidades nuevas (evaluadas: {len(opportunities)})")
+            # ── Middles (apuestas de ventana) ───────────────────────────────
+            middles = scan_middles()
+            new_middles = [m for m in middles if not tracker.seen(m)]
+
+            for mid in new_middles:
+                ok = send_middle_alert(mid)
+                if ok:
+                    tracker.mark_seen(mid)
+                    total_alerts += 1
+                    logger.info(
+                        f"MIDDLE ENVIADO | {mid.event_name}"
+                        f" | Over {mid.over_line} + Under {mid.under_line}"
+                        f" | middle = {mid.middle_goal} goles"
+                        f" | ganancia si acierta: +€{mid.both_win_profit:.2f}"
+                    )
+
+            total_new = len(new_opps) + len(new_middles)
+            if not total_new:
+                logger.info(
+                    f"Sin oportunidades nuevas "
+                    f"(arb: {len(opportunities)}, middles: {len(middles)})"
+                )
 
         except KeyboardInterrupt:
             logger.info("Detenido por el usuario (Ctrl+C)")
