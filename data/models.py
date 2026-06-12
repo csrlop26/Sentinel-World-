@@ -21,11 +21,12 @@ class ArbOpportunity:
     margin_pct: float
     bankroll: float
     min_profit: float
+    market: str = "1×2"
     detected_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
     def unique_key(self) -> str:
         legs_part = "_".join(sorted(f"{l.bookmaker}:{l.outcome}" for l in self.legs))
-        return f"{self.event_id}:{legs_part}"
+        return f"{self.event_id}:{self.market}:{legs_part}"
 
     def to_dict(self) -> dict:
         return {

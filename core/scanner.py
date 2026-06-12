@@ -12,6 +12,8 @@ from data.models import ArbOpportunity
 
 logger = logging.getLogger(__name__)
 
+_WORLD_CUP_KEY = "soccer_fifa_world_cup"
+
 # Circuit breaker: si odds-api.net devuelve 401/403, se desactiva en toda la sesión
 _oddsnet_disabled = False
 
@@ -85,6 +87,7 @@ def _build_opp(
         margin_pct=round(margin_pct, 2),
         bankroll=settings.BANKROLL,
         min_profit=round(settings.BANKROLL * margin_pct / 100, 2),
+        market=event_data.get("market", "1×2"),
     )
 
 
@@ -92,25 +95,49 @@ def _build_opp(
 
 def _scan_theodds() -> list[ArbOpportunity]:
     """
-    Escanea todos los partidos del Mundial desde The Odds API.
-    Una sola llamada HTTP devuelve todos los eventos con TODOS los bookmakers.
+    Escanea todos los partidos del Mundial desde The Odds API,
+    analizando TODOS los mercados configurados (1x2, Over/Under, BTTS...).
+    Una sola llamada HTTP devuelve todo.
     """
-    from core.fetcher_theodds import get_world_cup_events, normalize_event
+    from core.fetcher_theodds import (
+        extract_event_meta,
+        extract_market_groups,
+        get_events_for_sport,
+    )
+    from config.settings import settings as s
 
-    try:
-        events = get_world_cup_events()
-    except Exception as e:
-        logger.warning(f"TheOddsAPI no disponible: {e}")
+    # Deportes a escanear: siempre el Mundial + los extra configurados
+    sport_keys = [_WORLD_CUP_KEY]
+    if s.EXTRA_SPORTS:
+        sport_keys += [sk.strip() for sk in s.EXTRA_SPORTS.split(",") if sk.strip()]
+
+    all_events: list[dict] = []
+    for sport_key in sport_keys:
+        try:
+            all_events += get_events_for_sport(sport_key)
+        except Exception as e:
+            logger.warning(f"TheOddsAPI ({sport_key}) no disponible: {e}")
+
+    if not all_events:
         return []
 
     opportunities: list[ArbOpportunity] = []
-    for event in events:
-        meta, odds_items = normalize_event(event)
-        opp = _build_opp(meta["id"], meta, odds_items)
-        if opp:
-            opportunities.append(opp)
+    markets_checked = 0
 
-    logger.info(f"TheOddsAPI → {len(events)} partidos revisados, {len(opportunities)} oportunidades")
+    for event in all_events:
+        meta = extract_event_meta(event)
+        for group_id, market_label, market_emoji, odds_items in extract_market_groups(event):
+            markets_checked += 1
+            event_id = f"{meta['id']}_{group_id}"
+            opp = _build_opp(event_id, {**meta, "market": market_label, "market_emoji": market_emoji}, odds_items)
+            if opp:
+                opportunities.append(opp)
+
+    logger.info(
+        f"TheOddsAPI → {len(all_events)} partidos · "
+        f"{markets_checked} mercados revisados · "
+        f"{len(opportunities)} oportunidades"
+    )
     return opportunities
 
 
