@@ -1,0 +1,13 @@
+# Forzar LF en los hooks para que funcionen en Git Bash (Windows)
+.githooks/* text eol=lf
+
+# Python y texto normal
+*.py text eol=lf
+*.txt text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+
+# Windows scripts con CRLF
+*.bat text eol=crlf
