@@ -38,9 +38,15 @@ _TTL_STATIC = 3600  # 1 hora para datos que no cambian
 # Caché de nombre → team_id para no gastar req en cada búsqueda
 _team_id_cache: dict[str, int] = {}
 
+# Circuit breaker: si el endpoint /team/{id}/events/last/ da 404 repetidamente
+# (plan free no incluye historial de partidos), desactivar para la sesión.
+_team_events_available: bool = True
+_team_events_404_count: int = 0
+_TEAM_EVENTS_404_THRESHOLD = 3  # tras 3 equipos sin datos → desactivar
+
 
 def _get(path: str, ttl: int = _TTL) -> dict | list | None:
-    """GET autenticado con caché en memoria."""
+    """GET autenticado con caché en memoria. Los 404 también se cachean."""
     if not settings.RAPIDAPI_KEY:
         return None
 
@@ -59,6 +65,8 @@ def _get(path: str, ttl: int = _TTL) -> dict | list | None:
             resp = client.get(f"{_BASE}{path}", headers=headers)
             logger.debug(f"FootApi {resp.status_code} → {path}")
             if resp.status_code == 404:
+                # Cachear el 404 para no repetir la petición (plan free bloquea muchos endpoints)
+                _cache[path] = (now, None)
                 return None
             resp.raise_for_status()
             data = resp.json()
@@ -192,10 +200,28 @@ def get_recent_events(
 
 
 def get_team_recent_matches(team_id: int, page: int = 0) -> list[dict]:
-    """Últimos ~10 partidos del equipo (todos los torneos — incluye clasificación WC)."""
+    """Últimos ~10 partidos del equipo. Devuelve [] si el plan free no incluye estos datos."""
+    global _team_events_available, _team_events_404_count
+
+    if not _team_events_available:
+        return []
+
     data = _get(f"/team/{team_id}/events/last/{page}")
     if isinstance(data, dict):
-        return data.get("events", [])
+        events = data.get("events", [])
+        if events:
+            _team_events_404_count = 0  # reset — hay datos
+        return events
+
+    # None puede ser 404 (bloqueado por plan) o error de red
+    _team_events_404_count += 1
+    if _team_events_404_count >= _TEAM_EVENTS_404_THRESHOLD:
+        _team_events_available = False
+        logger.warning(
+            "FootApi: /team/events/last devuelve 404 repetidamente — "
+            "historial de partidos no disponible en plan free. "
+            "Poisson desactivado para esta sesión."
+        )
     return []
 
 
