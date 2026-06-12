@@ -192,39 +192,38 @@ def cmd_run():
 
 
 def cmd_info():
-    """Diagnóstico: lista deportes, ligas y eventos disponibles en la API."""
+    """Diagnóstico: lista deportes y partidos disponibles en The Odds API."""
+    from core.fetcher_theodds import find_world_cup_key, get_events_for_sport, get_theodds_sports, extract_event_meta
+
     print("\n=== DIAGNÓSTICO DE LA API ===\n")
 
-    print("📋 Deportes disponibles:")
+    if not settings.THEODDS_API_KEY:
+        print("  ERROR: THEODDS_API_KEY no configurada en .env")
+        return
+
+    print("📋 Deportes de fútbol disponibles (The Odds API):")
     try:
-        sports = get_sports()
-        for s in sports:
-            print(f"  • {s}")
+        sports = get_theodds_sports()
+        soccer = [s for s in sports if (s.get("group") or "").lower() == "soccer" and s.get("active")]
+        for s in soccer[:15]:
+            print(f"  • {s.get('title', '?')}  [{s['key']}]")
+        if len(soccer) > 15:
+            print(f"  … y {len(soccer) - 15} más. Usa 'python main.py sports' para verlos todos.")
     except Exception as e:
         print(f"  ERROR: {e}")
 
-    print(f"\n📋 Ligas de '{settings.SPORT_FILTER}':")
+    wc_key = find_world_cup_key()
+    print(f"\n📋 Partidos del Mundial ({wc_key}):")
     try:
-        leagues = get_leagues(sport=settings.SPORT_FILTER)
-        for league in leagues:
-            wc = " ← MUNDIAL" if "world" in str(league).lower() else ""
-            print(f"  • {league}{wc}")
-    except Exception as e:
-        print(f"  ERROR: {e}")
-
-    print(f"\n📋 Próximos eventos (filtro: '{settings.LEAGUE_FILTER}'):")
-    try:
-        events = get_events(
-            sport=settings.SPORT_FILTER,
-            league=settings.LEAGUE_FILTER,
-            limit=20,
-        )
-        for ev in events:
-            home = ev.get("home_team") or ev.get("home") or ""
-            away = ev.get("away_team") or ev.get("away") or ""
-            name = f"{home} vs {away}" if home and away else ev.get("name", ev.get("id", "?"))
-            league = ev.get("league", "")
-            print(f"  • [{ev.get('id', '?')}] {name}  ({league})")
+        events = get_events_for_sport(wc_key)
+        for ev in events[:20]:
+            meta = extract_event_meta(ev)
+            name = f"{meta['home_team']} vs {meta['away_team']}"
+            books = len(ev.get("bookmakers", []))
+            print(f"  • {name}  ({meta.get('commence_time', '')[:10]})  [{books} casas]")
+        if len(events) > 20:
+            print(f"  … y {len(events) - 20} partidos más.")
+        print(f"\n  Total: {len(events)} partidos con cuotas disponibles")
     except Exception as e:
         print(f"  ERROR: {e}")
 
