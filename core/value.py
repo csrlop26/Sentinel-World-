@@ -7,6 +7,8 @@ Método:
   2. Eliminamos su margen ("devigify") → probabilidad real P_real.
   3. Si una casa DGOJ ofrece odds tales que odds × P_real > 1 → valor.
   4. Stake: Quarter-Kelly (25% del Kelly completo, cap 10% bankroll).
+  5. (Opcional) Segunda capa: modelo Poisson con datos de FootApi.
+     Si Poisson confirma el edge → confidence="high".
 """
 
 import logging
@@ -207,4 +209,122 @@ def find_value_bets(
 
     results.sort(key=lambda v: -v.edge_pct)
     logger.info(f"Value bets → {len(results)} encontradas en {len(events)} eventos (edge ≥ {min_edge}%)")
+
+    if settings.RAPIDAPI_KEY and results:
+        _enrich_with_poisson(results)
+
     return results
+
+
+# ── Confirmación Poisson ──────────────────────────────────────────────────────
+
+# Caché de sesión: (home_name_lower, away_name_lower) → PoissonProbs | None
+_poisson_match_cache: dict[tuple[str, str], object] = {}
+
+
+def _get_poisson_probs(home_name: str, away_name: str):
+    """Devuelve PoissonProbs para el partido, o None si no hay datos."""
+    key = (home_name.lower(), away_name.lower())
+    if key in _poisson_match_cache:
+        return _poisson_match_cache[key]
+
+    try:
+        from core.fetcher_footapi import get_team_id_by_name, get_team_recent_matches
+        from core.poisson import calc_probs, estimate_lambdas, stats_from_recent_matches
+
+        home_id = get_team_id_by_name(home_name)
+        away_id = get_team_id_by_name(away_name)
+        if not home_id or not away_id:
+            _poisson_match_cache[key] = None
+            return None
+
+        home_matches = get_team_recent_matches(home_id)
+        away_matches = get_team_recent_matches(away_id)
+
+        home_stats = stats_from_recent_matches(home_id, home_name, home_matches)
+        away_stats = stats_from_recent_matches(away_id, away_name, away_matches)
+
+        if not home_stats or not away_stats:
+            _poisson_match_cache[key] = None
+            return None
+
+        lh, la = estimate_lambdas(home_stats, away_stats)
+        probs = calc_probs(lh, la)
+        _poisson_match_cache[key] = probs
+        logger.info(
+            f"Poisson {home_name} vs {away_name}: "
+            f"λ={lh:.2f}/{la:.2f}  "
+            f"1×2={probs.home_win:.0%}/{probs.draw:.0%}/{probs.away_win:.0%}"
+        )
+        return probs
+
+    except Exception as e:
+        logger.debug(f"Poisson enrichment error ({home_name} vs {away_name}): {e}")
+        _poisson_match_cache[key] = None
+        return None
+
+
+def _poisson_prob_for_outcome(probs, outcome: str, home_name: str, away_name: str) -> float | None:
+    """Mapea el nombre de un outcome a su probabilidad Poisson."""
+    out_low = outcome.lower().strip()
+    home_low = home_name.lower()
+    away_low = away_name.lower()
+
+    if out_low == "draw":
+        return probs.draw
+    if out_low in (home_low, "home", "1"):
+        return probs.home_win
+    if out_low in (away_low, "away", "2"):
+        return probs.away_win
+
+    # Totals: "Over 2.5 2.5" o "Under 2.5 2.5" (el outcome incluye el punto)
+    parts = out_low.split()
+    if len(parts) >= 2:
+        direction = parts[0]
+        # El punto puede estar al final ("Over 2.5" o "Over 2.5 2.5")
+        for part in reversed(parts[1:]):
+            try:
+                line = float(part)
+                if direction == "over":
+                    return probs.over.get(line)
+                if direction == "under":
+                    return probs.under.get(line)
+            except ValueError:
+                continue
+
+    return None
+
+
+def _enrich_with_poisson(value_bets: list[ValueBet]) -> None:
+    """
+    Enriquece cada ValueBet con la probabilidad Poisson del outcome.
+    Marca confidence="high" cuando Poisson confirma el edge del consenso sharp.
+    Opera in-place; no lanza excepciones — FootApi es opcional.
+    """
+    for vb in value_bets:
+        try:
+            parts = vb.event_name.split(" vs ", 1)
+            if len(parts) != 2:
+                continue
+            home_name, away_name = parts
+
+            probs = _get_poisson_probs(home_name, away_name)
+            if probs is None:
+                continue
+
+            p_poisson = _poisson_prob_for_outcome(probs, vb.outcome, home_name, away_name)
+            if p_poisson is None:
+                continue
+
+            vb.poisson_prob = round(p_poisson, 4)
+
+            # Confirmar si Poisson también ve edge y no discrepa demasiado del consenso sharp
+            poisson_edge = vb.odds * p_poisson - 1
+            prob_diff = abs(p_poisson - vb.true_prob)
+            if poisson_edge > 0 and prob_diff <= 0.10:
+                vb.confidence = "high"
+            else:
+                vb.confidence = "normal"
+
+        except Exception as e:
+            logger.debug(f"Poisson enrich error ({vb.event_name}): {e}")

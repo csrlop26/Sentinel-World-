@@ -213,11 +213,19 @@ def format_value_alert(vb: ValueBet) -> str:
     true_pct = round(vb.true_prob * 100, 1)
     implied_pct = round(100 / vb.odds, 1)
 
+    confidence_badge = (
+        "🟢 <b>ALTA CONFIANZA</b> — Poisson confirma el edge\n"
+        if vb.confidence == "high"
+        else ""
+    )
+
     lines = [
         f"📊 <b>VALUE BET +{vb.edge_pct:.1f}% — {_html(vb.market)}</b>",
         "━━━━━━━━━━━━━━━━━━━━",
-        f"⚽ <b>{_html(vb.event_name)}</b>",
     ]
+    if confidence_badge:
+        lines.append(confidence_badge.rstrip())
+    lines.append(f"⚽ <b>{_html(vb.event_name)}</b>")
     if vb.league:
         lines.append(f"🏅 {_html(vb.league)}")
     if vb.commence_time:
@@ -231,6 +239,11 @@ def format_value_alert(vb: ValueBet) -> str:
         "",
         "📊 <b>ANÁLISIS DE VALOR</b>",
         f"  Prob. real ({_html(vb.sharp_ref)}): <b>{true_pct}%</b>",
+    ]
+    if vb.poisson_prob is not None:
+        poisson_pct = round(vb.poisson_prob * 100, 1)
+        lines.append(f"  Prob. Poisson (modelo): <b>{poisson_pct}%</b>")
+    lines += [
         f"  Prob. implícita en casa: {implied_pct}%",
         f"  Edge: <b>+{vb.edge_pct:.1f}%</b>",
         "",

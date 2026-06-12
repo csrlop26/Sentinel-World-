@@ -202,18 +202,38 @@ def get_team_recent_matches(team_id: int, page: int = 0) -> list[dict]:
 # ── Equipos ───────────────────────────────────────────────────────────────────
 
 def search_team(name: str) -> dict | None:
-    """Busca un equipo por nombre. Prueba varias rutas de búsqueda."""
+    """
+    Busca un equipo por nombre usando la búsqueda general (/search/{query}).
+    Filtra por deporte fútbol si hay información disponible.
+    """
     query = urllib.parse.quote(name)
-    for path in (f"/search/teams/{query}", f"/search/team/{query}", f"/search/{query}"):
-        data = _get(path, ttl=_TTL_STATIC)
-        if not isinstance(data, dict):
-            continue
-        # Buscar en distintas claves de respuesta
-        for key in ("teams", "results", "data"):
-            results = data.get(key, [])
-            if results:
-                return results[0]
-    return None
+    data = _get(f"/search/{query}", ttl=_TTL_STATIC)
+    if not isinstance(data, dict):
+        return None
+
+    # La respuesta puede tener varias estructuras según la versión de la API
+    teams: list[dict] = data.get("teams", [])
+    if not teams:
+        results = data.get("results", [])
+        teams = [
+            r.get("entity", r)
+            for r in results
+            if r.get("type") in ("team", "uniqueTeam", None)
+        ]
+
+    if not teams:
+        return None
+
+    # Preferir equipos de fútbol (sport.id == 1 en Sofascore)
+    for team in teams:
+        sport = team.get("sport")
+        if isinstance(sport, dict):
+            if sport.get("id") == 1 or (sport.get("name") or "").lower() == "football":
+                return team
+        elif sport is None:
+            return team  # sin info de deporte → asumir fútbol
+
+    return teams[0]
 
 
 def get_team_id_by_name(name: str) -> int | None:
@@ -230,7 +250,7 @@ def get_team_id_by_name(name: str) -> int | None:
         tid = team.get("id")
         if tid:
             _team_id_cache[normalized] = int(tid)
-            logger.debug(f"FootApi team '{name}' → ID {tid}")
+            logger.info(f"FootApi team '{name}' → ID {tid} ({team.get('name', '?')})")
             return int(tid)
 
     logger.warning(f"FootApi: equipo '{name}' no encontrado")

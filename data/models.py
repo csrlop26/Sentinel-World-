@@ -56,6 +56,8 @@ class ValueBet:
     kelly_pct: float     # % del bankroll recomendado (quarter-Kelly)
     stake: float         # stake en € recomendado
     sharp_ref: str       # casas usadas como referencia
+    poisson_prob: float | None = None   # probabilidad Poisson para este outcome (si disponible)
+    confidence: str = "normal"          # "high" si Poisson confirma el consenso sharp
     detected_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
     def unique_key(self) -> str:
