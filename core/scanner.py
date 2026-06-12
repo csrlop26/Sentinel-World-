@@ -62,7 +62,9 @@ def _build_opp(
     event_data: dict,
     odds_items: list[dict],
 ) -> ArbOpportunity | None:
-    best_odds = find_best_odds(odds_items, bookmaker_filter=_bookmaker_filter())
+    # Usar TODAS las casas para detectar divergencias — más arbs encontrados.
+    # La licencia DGOJ se marca por pata en el propio arb, no se filtra aquí.
+    best_odds = find_best_odds(odds_items, bookmaker_filter=None)
     if len(best_odds) < 2:
         return None
 
@@ -74,6 +76,10 @@ def _build_opp(
         logger.warning(f"Margen sospechoso {margin_pct:.2f}% en {event_id} — ignorado")
         return None
 
+    legs = build_legs(stakes)
+    for leg in legs:
+        leg.is_dgoj = is_spain_licensed(leg.bookmaker)
+
     return ArbOpportunity(
         event_id=event_id,
         event_name=_event_name(event_data),
@@ -83,7 +89,7 @@ def _build_opp(
             event_data.get("commence_time")
             or _commence_time(event_data)
         ),
-        legs=build_legs(stakes),
+        legs=legs,
         margin_pct=round(margin_pct, 2),
         bankroll=settings.BANKROLL,
         min_profit=round(settings.BANKROLL * margin_pct / 100, 2),

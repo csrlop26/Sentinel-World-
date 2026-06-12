@@ -64,12 +64,15 @@ def format_alert(opp: ArbOpportunity) -> str:
         f"💶 <b>APUESTAS  (Bankroll: €{opp.bankroll:.2f})</b>",
     ]
 
+    has_non_dgoj = any(not leg.is_dgoj for leg in opp.legs)
+
     for i, leg in enumerate(opp.legs):
         is_last = i == len(opp.legs) - 1
         prefix = "└" if is_last else "├"
         emoji = _outcome_emoji(leg.outcome)
+        dgoj_tag = "" if leg.is_dgoj else " <b>⚠️</b>"
         lines.append(f"{prefix} {emoji} <b>{_html(leg.outcome)}</b>")
-        lines.append(f"│   Casa: {_html(leg.bookmaker)}  ·  Cuota: {leg.odds}")
+        lines.append(f"│   Casa: {_html(leg.bookmaker)}{dgoj_tag}  ·  Cuota: {leg.odds}")
         lines.append(f"│   💰 Apostar: <b>€{leg.stake:.2f}</b>")
         if not is_last:
             lines.append("│")
@@ -80,8 +83,10 @@ def format_alert(opp: ArbOpportunity) -> str:
         f"📊 Total invertido: €{total_staked:.2f}",
         f"💵 Ganancia mínima: <b>+€{opp.min_profit:.2f}  (+{opp.margin_pct:.2f}%)</b>",
         "━━━━━━━━━━━━━━━━━━━━",
-        "⚡ <i>Actúa en los próximos 5–10 minutos</i>",
     ]
+    if has_non_dgoj:
+        lines.append("⚠️ <i>Casa sin licencia DGOJ — opera bajo tu responsabilidad</i>")
+    lines.append("⚡ <i>Actúa en los próximos 5–10 minutos</i>")
 
     return "\n".join(lines)
 

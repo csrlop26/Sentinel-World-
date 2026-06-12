@@ -70,6 +70,7 @@ class ArbLeg:
     outcome: str
     odds: float
     stake: float
+    is_dgoj: bool = True   # False si la casa no tiene licencia DGOJ española
 
 
 @dataclass
