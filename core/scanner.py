@@ -8,7 +8,7 @@ from config.bookmakers import is_spain_licensed
 from config.settings import settings
 from core.calculator import build_legs, calculate_arb, find_best_odds
 from core.fetcher import get_arb_bets, get_event, get_events, get_odds_snapshot
-from data.models import ArbOpportunity
+from data.models import ArbOpportunity, MiddleOpportunity
 
 logger = logging.getLogger(__name__)
 
@@ -221,6 +221,36 @@ def _scan_oddsnet() -> list[ArbOpportunity]:
 
     logger.info(f"odds-api.net → {len(event_ids)} eventos revisados, {len(opportunities)} oportunidades")
     return opportunities
+
+
+# ── Scan de middles ──────────────────────────────────────────────────────────
+
+def scan_middles() -> list[MiddleOpportunity]:
+    """
+    Detecta oportunidades de middle (Over X.5 + Under (X+1).5 en casas distintas).
+    Requiere THEODDS_API_KEY configurada — usa los mismos eventos cacheados.
+    """
+    if not settings.THEODDS_API_KEY:
+        return []
+
+    from core.fetcher_theodds import get_events_for_sport
+    from core.middles import find_middles
+
+    sport_keys = [_WORLD_CUP_KEY]
+    if settings.EXTRA_SPORTS:
+        sport_keys += [sk.strip() for sk in settings.EXTRA_SPORTS.split(",") if sk.strip()]
+
+    all_events: list[dict] = []
+    for sport_key in sport_keys:
+        try:
+            all_events += get_events_for_sport(sport_key)
+        except Exception as e:
+            logger.warning(f"TheOddsAPI ({sport_key}) no disponible para middles: {e}")
+
+    if not all_events:
+        return []
+
+    return find_middles(all_events, bookmaker_filter=_bookmaker_filter())
 
 
 # ── Scan principal ────────────────────────────────────────────────────────────

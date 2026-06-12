@@ -3,7 +3,7 @@ import logging
 import requests
 
 from config.settings import settings
-from data.models import ArbOpportunity
+from data.models import ArbOpportunity, MiddleOpportunity
 
 logger = logging.getLogger(__name__)
 
@@ -103,8 +103,61 @@ def _send(text: str) -> bool:
         return False
 
 
+def format_middle_alert(opp: MiddleOpportunity) -> str:
+    total_staked = opp.stake_each * 2
+
+    lines = [
+        "🎯 <b>MIDDLE — VENTANA DE GOLES</b>",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"⚽ <b>{_html(opp.event_name)}</b>",
+    ]
+    if opp.league:
+        lines.append(f"🏅 {_html(opp.league)}")
+    if opp.commence_time:
+        lines.append(f"📅 {_html(opp.commence_time)}")
+
+    lines += [
+        "",
+        f"🔮 <b>Ventana: exactamente {opp.middle_goal} goles → AMBAS GANAN</b>",
+        f"📊 Prob. implícita del middle: <b>{opp.implied_middle_prob}%</b>",
+        "",
+        f"💶 <b>APUESTAS  (€{opp.stake_each:.2f} por lado)</b>",
+        f"├ ⬆️ <b>Over {opp.over_line}</b>",
+        f"│   Casa: {_html(opp.over_bookmaker)}  ·  Cuota: {opp.over_odds}",
+        f"│   💰 Apostar: <b>€{opp.stake_each:.2f}</b>",
+        "│",
+        f"└ ⬇️ <b>Under {opp.under_line}</b>",
+        f"    Casa: {_html(opp.under_bookmaker)}  ·  Cuota: {opp.under_odds}",
+        f"    💰 Apostar: <b>€{opp.stake_each:.2f}</b>",
+        "",
+        f"📈 <b>ESCENARIOS  (invertido: €{total_staked:.2f})</b>",
+        f"  🎯 = {opp.middle_goal} goles:  <b>+€{opp.both_win_profit:.2f}  AMBAS GANAN</b>",
+    ]
+
+    ov = opp.over_wins_result
+    un = opp.under_wins_result
+    lines.append(
+        f"  ⬆️ &gt; {opp.under_line} goles: "
+        + (f"<b>+€{ov:.2f}</b>" if ov >= 0 else f"-€{abs(ov):.2f}")
+    )
+    lines.append(
+        f"  ⬇️ &lt; {opp.over_line} goles: "
+        + (f"<b>+€{un:.2f}</b>" if un >= 0 else f"-€{abs(un):.2f}")
+    )
+
+    lines += [
+        "━━━━━━━━━━━━━━━━━━━━",
+        "⚡ <i>Apuesta ambos lados antes del partido</i>",
+    ]
+    return "\n".join(lines)
+
+
 def send_alert(opp: ArbOpportunity) -> bool:
     return _send(format_alert(opp))
+
+
+def send_middle_alert(opp: MiddleOpportunity) -> bool:
+    return _send(format_middle_alert(opp))
 
 
 def send_startup() -> bool:
