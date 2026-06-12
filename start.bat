@@ -2,6 +2,9 @@
 chcp 65001 >nul
 title Sentinel World - Bot Activo
 
+REM ── Ir siempre a la carpeta donde está este .bat ──────────────────────────
+cd /d "%~dp0"
+
 echo.
 echo  ==========================================
 echo    SENTINEL WORLD - Iniciando Bot

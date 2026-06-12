@@ -1,6 +1,10 @@
 @echo off
 chcp 65001 >nul
+setlocal enabledelayedexpansion
 title Sentinel World - Actualizar Bot
+
+REM ── Ir siempre a la carpeta donde está este .bat ──────────────────────────
+cd /d "%~dp0"
 
 echo.
 echo  ==========================================
@@ -8,11 +12,16 @@ echo    SENTINEL WORLD - Actualizar Bot
 echo  ==========================================
 echo.
 
-REM ── Verificar que estamos en el directorio correcto ───────────────────────
+REM ── Verificar que estamos en el repositorio Git ───────────────────────────
 git status >nul 2>&1
 if errorlevel 1 (
-    echo  ERROR: No se detecta repositorio Git.
-    echo  Ejecuta este archivo desde la carpeta del proyecto.
+    echo  ERROR: No se detecta repositorio Git en:
+    echo  %CD%
+    echo.
+    echo  Posibles causas:
+    echo    1. Aun no has clonado el repositorio. Usa Git para clonar:
+    echo       git clone https://github.com/csrlop26/Sentinel-World-.git
+    echo    2. Git no esta instalado. Descargalo en https://git-scm.com
     echo.
     pause
     exit /b 1
