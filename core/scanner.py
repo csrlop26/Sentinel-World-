@@ -62,9 +62,7 @@ def _build_opp(
     event_data: dict,
     odds_items: list[dict],
 ) -> ArbOpportunity | None:
-    # Usar TODAS las casas para detectar divergencias — más arbs encontrados.
-    # La licencia DGOJ se marca por pata en el propio arb, no se filtra aquí.
-    best_odds = find_best_odds(odds_items, bookmaker_filter=None)
+    best_odds = find_best_odds(odds_items, bookmaker_filter=_bookmaker_filter())
     if len(best_odds) < 2:
         return None
 
