@@ -35,6 +35,34 @@ class MiddleOpportunity:
 
 
 @dataclass
+class ValueBet:
+    """
+    Value bet (+EV) — cuota de una casa blanda superior a la probabilidad real
+    estimada por el consenso de casas sharp (Pinnacle, Betfair Exchange...).
+
+    Edge = (odds × P_real − 1) × 100
+    Stake = Quarter-Kelly × Bankroll (cap 10%)
+    """
+    event_id: str
+    event_name: str
+    league: str
+    commence_time: str
+    market: str          # "1×2", "Más/Menos 2.5 goles"
+    outcome: str         # "Over 2.5", "Home", "Draw", etc.
+    bookmaker: str       # donde apostar
+    odds: float
+    true_prob: float     # probabilidad real según consenso sharp (0-1)
+    edge_pct: float      # (odds × true_prob − 1) × 100
+    kelly_pct: float     # % del bankroll recomendado (quarter-Kelly)
+    stake: float         # stake en € recomendado
+    sharp_ref: str       # casas usadas como referencia
+    detected_at: str = field(default_factory=lambda: datetime.now().isoformat())
+
+    def unique_key(self) -> str:
+        return f"value:{self.event_id}:{self.market}:{self.outcome}:{self.bookmaker}"
+
+
+@dataclass
 class ArbLeg:
     bookmaker: str
     outcome: str

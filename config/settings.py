@@ -41,5 +41,9 @@ class Settings(BaseSettings):
     # Ejemplo: "tennis_atp_wimbledon,basketball_nba"
     EXTRA_SPORTS: str = ""
 
+    # Value Betting (+EV)
+    # Edge mínimo para alertar una value bet (odds × P_real − 1) × 100 ≥ este valor
+    MIN_VALUE_EDGE: float = 5.0
+
 
 settings = Settings()

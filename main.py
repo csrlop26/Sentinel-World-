@@ -12,7 +12,7 @@ from config.bookmakers import is_spain_licensed
 from config.settings import settings
 from core.fetcher import get_events, get_leagues, get_sports
 from core.fetcher_theodds import get_world_cup_events
-from core.scanner import scan, scan_middles
+from core.scanner import scan, scan_middles, scan_value_bets
 from data.tracker import ArbitrageTracker
 from notifiers.telegram import (
     check_commands,
@@ -21,6 +21,7 @@ from notifiers.telegram import (
     send_middle_alert,
     send_startup,
     send_text,
+    send_value_alert,
 )
 
 logging.basicConfig(
@@ -65,6 +66,20 @@ def _handle_command(cmd: str, tracker: "ArbitrageTracker") -> None:
             if ok:
                 tracker.mark_seen(opp)
 
+    elif cmd == "/value":
+        send_text("🔍 <i>Buscando value bets ahora mismo...</i>")
+        value_bets = scan_value_bets()
+        if not value_bets:
+            send_text("ℹ️ Sin value bets disponibles ahora mismo.")
+            logger.info("Comando /value — sin resultados")
+            return
+        for vb in value_bets[:10]:  # máximo 10 para no saturar
+            send_value_alert(vb)
+            logger.info(f"VALUE (manual) | {vb.event_name} | {vb.outcome} @ {vb.bookmaker} | edge {vb.edge_pct:.1f}%")
+        if len(value_bets) > 10:
+            send_text(f"ℹ️ +{len(value_bets) - 10} más — sube MIN_VALUE_EDGE para filtrar.")
+        send_text(f"✅ <b>{len(value_bets)} value bet(s) encontradas.</b>")
+
     elif cmd == "/status":
         from core.fetcher_theodds import _working_markets, _WORLD_CUP_KEY
         wc = list(_working_markets.keys()) or [_WORLD_CUP_KEY]
@@ -77,13 +92,16 @@ def _handle_command(cmd: str, tracker: "ArbitrageTracker") -> None:
             f"🔑 Filtro DGOJ: {'✓' if settings.SPAIN_ONLY else '✗'}\n"
             f"⏱ Intervalo: {settings.SCAN_INTERVAL}s\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "📨 /middle · /arb · /status"
+            f"📊 Edge mínimo: {settings.MIN_VALUE_EDGE}%\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "📨 /value · /middle · /arb · /status"
         )
 
     else:
         send_text(
             f"❓ Comando no reconocido: <code>{cmd}</code>\n\n"
             "Comandos disponibles:\n"
+            "  /value  — buscar value bets (+EV)\n"
             "  /middle — buscar ventanas de goles\n"
             "  /arb    — forzar escaneo de arbitrajes\n"
             "  /status — ver estado del bot"
@@ -135,8 +153,26 @@ def cmd_run():
                         f" | ganancia ≥ +€{opp.min_profit:.2f}"
                     )
 
-            if not new_opps:
-                logger.info(f"Sin arbitrajes nuevos (evaluados: {len(opportunities)})")
+            # ── Value bets (+EV, automáticas) ──────────────────────────────
+            value_bets = scan_value_bets()
+            new_values = [v for v in value_bets if not tracker.seen(v)]
+
+            for vb in new_values:
+                ok = send_value_alert(vb)
+                if ok:
+                    tracker.mark_seen(vb)
+                    total_alerts += 1
+                    logger.info(
+                        f"VALUE ENVIADO | {vb.event_name}"
+                        f" | {vb.outcome} @ {vb.bookmaker}"
+                        f" | edge +{vb.edge_pct:.1f}%  stake €{vb.stake:.2f}"
+                    )
+
+            if not new_opps and not new_values:
+                logger.info(
+                    f"Sin alertas nuevas "
+                    f"(arb: {len(opportunities)}, value: {len(value_bets)})"
+                )
 
         except KeyboardInterrupt:
             logger.info("Detenido por el usuario (Ctrl+C)")
