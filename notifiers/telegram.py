@@ -103,6 +103,63 @@ def _send(text: str) -> bool:
         return False
 
 
+# ── Polling de comandos ───────────────────────────────────────────────────────
+
+_last_update_id: int = 0
+
+
+def init_command_polling() -> None:
+    """
+    Descarta todos los mensajes pendientes antes de arrancar el bot,
+    para que comandos viejos no se ejecuten al reiniciar.
+    """
+    global _last_update_id
+    url = f"{_TELEGRAM_API}/bot{settings.TELEGRAM_BOT_TOKEN}/getUpdates"
+    try:
+        resp = requests.get(url, params={"offset": -1, "limit": 1}, timeout=5)
+        resp.raise_for_status()
+        results = resp.json().get("result", [])
+        if results:
+            _last_update_id = results[-1]["update_id"]
+            logger.info(f"Telegram polling inicializado (skip hasta update_id={_last_update_id})")
+    except Exception as e:
+        logger.debug(f"Telegram init polling: {e}")
+
+
+def check_commands() -> list[str]:
+    """
+    Devuelve los comandos (/middle, /arb, etc.) enviados al bot desde el
+    último check, solo aceptando mensajes del TELEGRAM_CHAT_ID configurado.
+    """
+    global _last_update_id
+    url = f"{_TELEGRAM_API}/bot{settings.TELEGRAM_BOT_TOKEN}/getUpdates"
+    params = {
+        "offset": _last_update_id + 1,
+        "limit": 20,
+        "timeout": 1,
+        "allowed_updates": ["message"],
+    }
+    try:
+        resp = requests.get(url, params=params, timeout=5)
+        resp.raise_for_status()
+        updates = resp.json().get("result", [])
+    except Exception as e:
+        logger.debug(f"Telegram getUpdates: {e}")
+        return []
+
+    commands: list[str] = []
+    for upd in updates:
+        _last_update_id = max(_last_update_id, upd["update_id"])
+        msg = upd.get("message", {})
+        text = (msg.get("text") or "").strip()
+        chat_id = str(msg.get("chat", {}).get("id", ""))
+        if chat_id == str(settings.TELEGRAM_CHAT_ID) and text.startswith("/"):
+            cmd = text.split()[0].lower().split("@")[0]  # /middle@botname → /middle
+            commands.append(cmd)
+
+    return commands
+
+
 def format_middle_alert(opp: MiddleOpportunity) -> str:
     total_staked = opp.stake_each * 2
 
@@ -169,8 +226,17 @@ def send_startup() -> bool:
         f"📊 Margen mínimo: <b>{settings.MIN_ARB_MARGIN}%</b>\n"
         f"⏱ Intervalo: <b>{settings.SCAN_INTERVAL}s</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "<i>Recibirás alertas cuando detecte oportunidades de arbitraje</i>"
+        "📨 <b>Comandos disponibles:</b>\n"
+        "  /middle — buscar ventanas de goles ahora\n"
+        "  /arb    — forzar escaneo de arbitrajes\n"
+        "  /status — ver estado del bot\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "<i>Recibirás alertas automáticas de arbitraje</i>"
     )
+    return _send(text)
+
+
+def send_text(text: str) -> bool:
     return _send(text)
 
 
