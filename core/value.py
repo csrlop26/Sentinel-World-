@@ -207,9 +207,12 @@ def find_value_bets(
                             sharp_ref=sharp_ref,
                         ))
 
+    raw_count = len(results)
+
     # Filtrar por stake mínimo (evita longshots con apuestas de céntimos)
     min_stake = settings.MIN_VALUE_STAKE
     results = [v for v in results if v.stake >= min_stake]
+    stake_filtered = raw_count - len(results)
 
     # Dedup: mismo partido+mercado+outcome en varias casas → solo la de mejor cuota
     best: dict[str, ValueBet] = {}
@@ -218,12 +221,15 @@ def find_value_bets(
         existing = best.get(key)
         if existing is None or vb.odds > existing.odds:
             best[key] = vb
+    dedup_filtered = len(results) - len(best)
     results = list(best.values())
 
     results.sort(key=lambda v: -v.edge_pct)
     logger.info(
-        f"Value bets → {len(results)} únicas (stake ≥ €{min_stake:.0f}) "
-        f"en {len(events)} eventos (edge ≥ {min_edge}%)"
+        f"Value bets → {raw_count} brutas · "
+        f"-{stake_filtered} stake<€{min_stake:.2f} · "
+        f"-{dedup_filtered} duplicadas · "
+        f"= {len(results)} únicas  (edge ≥ {min_edge}%,  {len(events)} eventos)"
     )
 
     if settings.RAPIDAPI_KEY and results:

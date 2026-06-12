@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     # Edge mínimo para alertar una value bet (odds × P_real − 1) × 100 ≥ este valor
     MIN_VALUE_EDGE: float = 5.0
     # Stake mínimo en € — filtra longshots con apuestas insignificantes (quarter-Kelly)
-    MIN_VALUE_STAKE: float = 1.0
+    MIN_VALUE_STAKE: float = 0.5
 
     # RapidAPI — FootApi (estadísticas de fútbol para modelo Poisson)
     RAPIDAPI_KEY: str = ""
