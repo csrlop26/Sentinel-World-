@@ -35,9 +35,120 @@ logging.basicConfig(
 logger = logging.getLogger("sentinel")
 
 
-def _handle_command(cmd: str, tracker: "ArbitrageTracker") -> None:
-    """Ejecuta un comando recibido por Telegram."""
-    if cmd == "/middle":
+def _digest_today() -> str:
+    """Resumen del día: partidos próximos + mejores value bets."""
+    from datetime import datetime, timedelta, timezone
+
+    from core.fetcher_theodds import (
+        extract_event_meta,
+        find_world_cup_key,
+        get_events_for_sport,
+    )
+
+    now = datetime.now(timezone.utc)
+    cutoff = now + timedelta(hours=24)
+
+    try:
+        events = get_events_for_sport(find_world_cup_key())
+    except Exception:
+        events = []
+
+    todays: list[tuple] = []
+    for ev in events:
+        try:
+            dt = datetime.fromisoformat(ev.get("commence_time", "").replace("Z", "+00:00"))
+        except Exception:
+            continue
+        if now <= dt <= cutoff:
+            todays.append((dt, ev))
+    todays.sort(key=lambda x: x[0])
+
+    lines = [
+        "📅 <b>DIGEST — PRÓXIMAS 24H</b>",
+        "━━━━━━━━━━━━━━━━━━━━",
+    ]
+
+    if todays:
+        lines.append(f"⚽ <b>{len(todays)} partido(s):</b>")
+        for dt, ev in todays[:12]:
+            meta = extract_event_meta(ev)
+            hora = dt.strftime("%H:%M")
+            lines.append(f"  • {hora} UTC — {meta['home_team']} vs {meta['away_team']}")
+        if len(todays) > 12:
+            lines.append(f"  … y {len(todays) - 12} más")
+    else:
+        lines.append("⚽ Sin partidos en las próximas 24h.")
+
+    value_bets = scan_value_bets()
+    lines.append("")
+    if value_bets:
+        lines.append(f"📊 <b>Top value bets ({len(value_bets)} encontradas):</b>")
+        for vb in value_bets[:5]:
+            badge = " 🟢" if vb.confidence == "high" else ""
+            lines.append(
+                f"  • {vb.event_name} — <b>{vb.outcome}</b> @ {vb.odds} "
+                f"({vb.bookmaker}) +{vb.edge_pct:.1f}%{badge}"
+            )
+        lines.append("  → /value para ver los detalles y stakes")
+    else:
+        lines.append("📊 Sin value bets dentro de la ventana ahora mismo.")
+
+    lines += [
+        "━━━━━━━━━━━━━━━━━━━━",
+        "📨 /value · /middle · /arb · /bank",
+    ]
+    return "\n".join(lines)
+
+
+def _handle_command(raw_cmd: str, tracker: "ArbitrageTracker") -> None:
+    """Ejecuta un comando recibido por Telegram. Soporta args: '/win 5.50'."""
+    from data.bankroll import get_bankroll, record_result, set_balance
+    from notifiers.telegram import format_bank_message
+
+    parts = raw_cmd.split()
+    cmd = parts[0]
+    args = parts[1:]
+
+    def _parse_amount() -> float | None:
+        if not args:
+            return None
+        try:
+            return float(args[0].replace(",", ".").replace("€", ""))
+        except ValueError:
+            return None
+
+    if cmd == "/bank":
+        send_text(format_bank_message())
+
+    elif cmd == "/win":
+        amount = _parse_amount()
+        if amount is None or amount <= 0:
+            send_text("Uso: <code>/win 5.50</code> — registra una ganancia en €")
+            return
+        balance = record_result(amount, "win")
+        send_text(f"✅ +€{amount:.2f} registrado · Balance: <b>€{balance:.2f}</b>")
+
+    elif cmd == "/loss":
+        amount = _parse_amount()
+        if amount is None or amount <= 0:
+            send_text("Uso: <code>/loss 2</code> — registra una pérdida en €")
+            return
+        balance = record_result(-amount, "loss")
+        send_text(f"❌ -€{amount:.2f} registrado · Balance: <b>€{balance:.2f}</b>")
+
+    elif cmd == "/setbank":
+        amount = _parse_amount()
+        if amount is None or amount <= 0:
+            send_text("Uso: <code>/setbank 120</code> — fija el balance en €")
+            return
+        balance = set_balance(amount)
+        send_text(f"🏦 Balance fijado en <b>€{balance:.2f}</b>")
+
+    elif cmd == "/hoy":
+        send_text("🔍 <i>Preparando el digest del día...</i>")
+        send_text(_digest_today())
+
+    elif cmd == "/middle":
         send_text("🔍 <i>Buscando middles ahora mismo...</i>")
         middles = scan_middles()
         if not middles:
@@ -81,29 +192,30 @@ def _handle_command(cmd: str, tracker: "ArbitrageTracker") -> None:
         send_text(f"✅ <b>{len(value_bets)} value bet(s) encontradas.</b>")
 
     elif cmd == "/status":
-        from core.fetcher_theodds import _working_markets, _WORLD_CUP_KEY
-        wc = list(_working_markets.keys()) or [_WORLD_CUP_KEY]
         send_text(
             "📊 <b>Estado del bot</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            f"💶 Bankroll: €{settings.BANKROLL:.2f}\n"
-            f"📊 Margen mín: {settings.MIN_ARB_MARGIN}%\n"
+            f"💶 Bankroll: €{get_bankroll():.2f}\n"
+            f"📊 Margen mín arb: {settings.MIN_ARB_MARGIN}%\n"
+            f"📊 Edge mín value: {settings.MIN_VALUE_EDGE}%\n"
+            f"⏳ Ventana value: {settings.VALUE_MAX_HOURS}h\n"
             f"🏆 Deporte: {settings.LEAGUE_FILTER or settings.SPORT_FILTER}\n"
             f"🔑 Filtro DGOJ: {'✓' if settings.SPAIN_ONLY else '✗'}\n"
             f"⏱ Intervalo: {settings.SCAN_INTERVAL}s\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            f"📊 Edge mínimo: {settings.MIN_VALUE_EDGE}%\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "📨 /value · /middle · /arb · /status"
+            "📨 /hoy · /value · /middle · /arb · /bank"
         )
 
     else:
         send_text(
             f"❓ Comando no reconocido: <code>{cmd}</code>\n\n"
             "Comandos disponibles:\n"
+            "  /hoy    — digest del día\n"
             "  /value  — buscar value bets (+EV)\n"
             "  /middle — buscar ventanas de goles\n"
             "  /arb    — forzar escaneo de arbitrajes\n"
+            "  /bank   — balance, P&amp;L y ROI\n"
+            "  /win X · /loss X · /setbank X\n"
             "  /status — ver estado del bot"
         )
 

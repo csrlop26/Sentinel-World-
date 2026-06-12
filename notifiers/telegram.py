@@ -159,8 +159,9 @@ def check_commands() -> list[str]:
         text = (msg.get("text") or "").strip()
         chat_id = str(msg.get("chat", {}).get("id", ""))
         if chat_id == str(settings.TELEGRAM_CHAT_ID) and text.startswith("/"):
-            cmd = text.split()[0].lower().split("@")[0]  # /middle@botname → /middle
-            commands.append(cmd)
+            parts = text.split()
+            base = parts[0].lower().split("@")[0]  # /middle@botname → /middle
+            commands.append(" ".join([base] + parts[1:]))  # conservar args: "/win 5.50"
 
     return commands
 
@@ -272,19 +273,48 @@ def send_value_alert(vb: ValueBet) -> bool:
     return _send(format_value_alert(vb))
 
 
+def format_bank_message() -> str:
+    from data.bankroll import get_stats
+
+    s = get_stats()
+    profit_str = (
+        f"+€{s['profit']:.2f}" if s["profit"] >= 0 else f"-€{abs(s['profit']):.2f}"
+    )
+    roi_str = f"+{s['roi_pct']}%" if s["roi_pct"] >= 0 else f"{s['roi_pct']}%"
+    trend = "📈" if s["profit"] >= 0 else "📉"
+
+    return (
+        "🏦 <b>BANKROLL</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"💶 Balance actual: <b>€{s['balance']:.2f}</b>\n"
+        f"🎬 Inicial: €{s['initial']:.2f}\n"
+        f"{trend} P&amp;L: <b>{profit_str}</b>  (ROI {roi_str})\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"✅ Ganadas: {s['n_wins']}  (+€{s['total_won']:.2f})\n"
+        f"❌ Perdidas: {s['n_losses']}  (-€{s['total_lost']:.2f})\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "📨 /win 5.50 · /loss 2 · /setbank 120"
+    )
+
+
 def send_startup() -> bool:
+    from data.bankroll import get_bankroll
+
     text = (
         "🚀 <b>Sentinel World — iniciado</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"🏆 Monitorizando: <b>{_html(settings.LEAGUE_FILTER or settings.SPORT_FILTER)}</b>\n"
-        f"💶 Bankroll: <b>€{settings.BANKROLL:.2f}</b>\n"
+        f"💶 Bankroll: <b>€{get_bankroll():.2f}</b>\n"
         f"📊 Margen mínimo: <b>{settings.MIN_ARB_MARGIN}%</b>\n"
         f"⏱ Intervalo: <b>{settings.SCAN_INTERVAL}s</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "📨 <b>Comandos disponibles:</b>\n"
+        "  /hoy    — digest: partidos y mejores apuestas de hoy\n"
         "  /value  — buscar value bets (+EV) ahora\n"
         "  /middle — buscar ventanas de goles ahora\n"
         "  /arb    — forzar escaneo de arbitrajes\n"
+        "  /bank   — balance, P&amp;L y ROI\n"
+        "  /win X · /loss X — registrar resultado de una apuesta\n"
         "  /status — ver estado del bot\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "<i>Recibirás alertas automáticas de arbitraje y value bets</i>"

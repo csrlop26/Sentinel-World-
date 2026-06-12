@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     MIN_VALUE_EDGE: float = 5.0
     # Stake mínimo en € — filtra longshots con apuestas insignificantes (quarter-Kelly)
     MIN_VALUE_STAKE: float = 0.5
+    # Solo alertar value bets de partidos en las próximas N horas.
+    # Las líneas lejanas son blandas y el "edge" suele desaparecer al acercarse el partido.
+    VALUE_MAX_HOURS: int = 48
+    # Exigir una casa sharp real (Pinnacle/Betfair Ex/Smarkets/Matchbook) en la
+    # referencia. False = aceptar consenso de 3+ casas blandas (menos fiable).
+    VALUE_REQUIRE_SHARP: bool = True
 
     # RapidAPI — FootApi (estadísticas de fútbol para modelo Poisson)
     RAPIDAPI_KEY: str = ""

@@ -62,11 +62,14 @@ def _build_opp(
     event_data: dict,
     odds_items: list[dict],
 ) -> ArbOpportunity | None:
+    from data.bankroll import get_bankroll
+
     best_odds = find_best_odds(odds_items, bookmaker_filter=_bookmaker_filter())
     if len(best_odds) < 2:
         return None
 
-    margin_pct, stakes = calculate_arb(best_odds, settings.BANKROLL)
+    bankroll = get_bankroll()   # balance real registrado → stakes componen
+    margin_pct, stakes = calculate_arb(best_odds, bankroll)
 
     if margin_pct < settings.MIN_ARB_MARGIN:
         return None
@@ -89,8 +92,8 @@ def _build_opp(
         ),
         legs=legs,
         margin_pct=round(margin_pct, 2),
-        bankroll=settings.BANKROLL,
-        min_profit=round(settings.BANKROLL * margin_pct / 100, 2),
+        bankroll=bankroll,
+        min_profit=round(bankroll * margin_pct / 100, 2),
         market=event_data.get("market", "1×2"),
     )
 

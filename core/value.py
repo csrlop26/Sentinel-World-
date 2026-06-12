@@ -138,12 +138,21 @@ def find_value_bets(
     bookmaker_filter aplica solo al lado de "apuesta recomendada" (dónde apostar).
     Para calcular la probabilidad de referencia se usan TODAS las casas.
     """
+    from datetime import datetime, timedelta, timezone
+
     from core.fetcher_theodds import extract_event_meta
+    from data.bankroll import get_bankroll
 
     if min_edge is None:
         min_edge = settings.MIN_VALUE_EDGE
 
+    bankroll = get_bankroll()   # balance real con resultados registrados → Kelly compone
     results: list[ValueBet] = []
+    skipped_far = 0
+
+    # Solo partidos dentro de la ventana — las líneas lejanas son blandas
+    # y el "edge" detectado a días vista suele ser ruido, no valor.
+    cutoff = datetime.now(timezone.utc) + timedelta(hours=settings.VALUE_MAX_HOURS)
 
     market_labels = {
         "h2h":    "1×2",
@@ -151,6 +160,15 @@ def find_value_bets(
     }
 
     for event in events:
+        commence_raw = event.get("commence_time", "")
+        try:
+            commence_dt = datetime.fromisoformat(commence_raw.replace("Z", "+00:00"))
+            if commence_dt > cutoff:
+                skipped_far += 1
+                continue
+        except Exception:
+            pass  # sin fecha parseable → no filtrar
+
         meta = extract_event_meta(event)
         event_name = f"{meta['home_team']} vs {meta['away_team']}"
 
@@ -162,9 +180,13 @@ def find_value_bets(
                 if not true_probs:
                     continue
 
-                # Necesitamos al menos un sharp o al menos 3 casas para confiar
                 has_sharp = any(c[0] for c in candidates)
-                if not has_sharp and len(candidates) < 3:
+                if settings.VALUE_REQUIRE_SHARP:
+                    # Sin casa sharp la "probabilidad real" es solo consenso
+                    # de casas blandas — demasiadas falsas señales.
+                    if not has_sharp:
+                        continue
+                elif not has_sharp and len(candidates) < 3:
                     continue
 
                 for is_sharp_bm, _, bm_name, odds_map in candidates:
@@ -180,7 +202,7 @@ def find_value_bets(
                         if edge_pct < min_edge:
                             continue
 
-                        kelly_pct, stake = _quarter_kelly(true_prob, odds, settings.BANKROLL)
+                        kelly_pct, stake = _quarter_kelly(true_prob, odds, bankroll)
                         if stake <= 0:
                             continue
 
@@ -229,7 +251,9 @@ def find_value_bets(
         f"Value bets → {raw_count} brutas · "
         f"-{stake_filtered} stake<€{min_stake:.2f} · "
         f"-{dedup_filtered} duplicadas · "
-        f"= {len(results)} únicas  (edge ≥ {min_edge}%,  {len(events)} eventos)"
+        f"= {len(results)} únicas  "
+        f"(edge ≥ {min_edge}%, bankroll €{bankroll:.2f}, "
+        f"{skipped_far} partidos >{settings.VALUE_MAX_HOURS}h descartados)"
     )
 
     if settings.RAPIDAPI_KEY and results:

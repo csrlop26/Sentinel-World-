@@ -32,6 +32,7 @@ token.json
 sentinel.log
 *.log
 data/seen_opportunities.json
+data/bankroll.json
 
 # ── IDEs ──────────────────────────────────────────────────────────────────────
 .idea/
