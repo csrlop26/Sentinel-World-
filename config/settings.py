@@ -45,5 +45,8 @@ class Settings(BaseSettings):
     # Edge mínimo para alertar una value bet (odds × P_real − 1) × 100 ≥ este valor
     MIN_VALUE_EDGE: float = 5.0
 
+    # RapidAPI — FootApi (estadísticas de fútbol para modelo Poisson)
+    RAPIDAPI_KEY: str = ""
+
 
 settings = Settings()

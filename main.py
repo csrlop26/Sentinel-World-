@@ -326,6 +326,60 @@ def cmd_sports():
     print("  Para escanear un deporte extra: EXTRA_SPORTS=<key> en .env\n")
 
 
+def cmd_footapi():
+    """Diagnóstico de FootApi: conectividad, torneos y próximos partidos del Mundial."""
+    from core.fetcher_footapi import diagnose, get_team_recent_matches, get_upcoming_events
+    from core.poisson import calc_probs, estimate_lambdas, stats_from_recent_matches
+
+    print("\n=== FOOTAPI — DIAGNÓSTICO ===\n")
+
+    if not settings.RAPIDAPI_KEY:
+        print("  ERROR: RAPIDAPI_KEY no configurada en .env")
+        print("  Añade: RAPIDAPI_KEY=tu_key en el .env")
+        return
+
+    result = diagnose()
+    if "error" in result:
+        print(f"  ERROR: {result['error']}")
+        return
+
+    print(f"  Torneo   : {result.get('tournament', '?')}")
+    print(f"  Season ID: {result.get('season_id', '?')}")
+    print(f"  Próximos : {result.get('upcoming_matches', 0)} partidos")
+    print(f"  Recientes: {result.get('recent_matches', 0)} partidos")
+
+    if result.get("next_match"):
+        print(f"\n  Próximo partido: {result['next_match']}")
+        home_id = result.get("home_team_id")
+        away_id = result.get("away_team_id")
+
+        if home_id and away_id:
+            home_name, away_name = result["next_match"].split(" vs ")
+            print(f"  Team IDs: {home_id} (local) / {away_id} (visitante)")
+
+            # Intentar calcular Poisson con últimos partidos de cada equipo
+            print(f"\n  Calculando modelo Poisson para {result['next_match']}...")
+            home_matches = get_team_recent_matches(home_id)
+            away_matches = get_team_recent_matches(away_id)
+
+            home_stats = stats_from_recent_matches(home_id, home_name, home_matches)
+            away_stats = stats_from_recent_matches(away_id, away_name, away_matches)
+
+            if home_stats and away_stats:
+                lh, la = estimate_lambdas(home_stats, away_stats)
+                probs = calc_probs(lh, la)
+                print(f"\n  λ local={lh:.2f}  λ visitante={la:.2f}")
+                print(f"  1×2: {home_name}={probs.home_win:.1%}  X={probs.draw:.1%}  {away_name}={probs.away_win:.1%}")
+                print(f"  Over 1.5: {probs.over[1.5]:.1%}  Over 2.5: {probs.over[2.5]:.1%}  Over 3.5: {probs.over[3.5]:.1%}")
+            else:
+                print(f"  Sin datos suficientes para el modelo Poisson")
+                print(f"  Home: {len(home_matches)} partidos encontrados")
+                print(f"  Away: {len(away_matches)} partidos encontrados")
+
+    print("\n  Si todo es correcto, el bot usará Poisson como segunda capa de confirmación.")
+    print("  Si season_id es None, FootApi puede no tener el WC 2026 aún.\n")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Sentinel World — Arbitrage Bot")
     sub = parser.add_subparsers(dest="cmd")
@@ -333,6 +387,7 @@ def main():
     sub.add_parser("info",        help="Mostrar deportes, ligas y eventos disponibles")
     sub.add_parser("bookmakers",  help="Ver qué casas devuelve la API y cuáles pasan el filtro España")
     sub.add_parser("sports",      help="Listar deportes activos en The Odds API")
+    sub.add_parser("footapi",     help="Diagnóstico de FootApi y modelo Poisson")
 
     args = parser.parse_args()
 
@@ -342,6 +397,8 @@ def main():
         cmd_bookmakers()
     elif args.cmd == "sports":
         cmd_sports()
+    elif args.cmd == "footapi":
+        cmd_footapi()
     else:
         cmd_run()
 
