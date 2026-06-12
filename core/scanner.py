@@ -8,7 +8,7 @@ from config.bookmakers import is_spain_licensed
 from config.settings import settings
 from core.calculator import build_legs, calculate_arb, find_best_odds
 from core.fetcher import get_arb_bets, get_event, get_events, get_odds_snapshot
-from data.models import ArbOpportunity, MiddleOpportunity
+from data.models import ArbOpportunity, MiddleOpportunity, ValueBet
 
 logger = logging.getLogger(__name__)
 
@@ -254,6 +254,37 @@ def scan_middles() -> list[MiddleOpportunity]:
         return []
 
     return find_middles(all_events, bookmaker_filter=_bookmaker_filter())
+
+
+# ── Scan de value bets ────────────────────────────────────────────────────────
+
+def scan_value_bets() -> list[ValueBet]:
+    """
+    Detecta value bets (+EV) usando el consenso de casas sharp como referencia.
+    Para la referencia usa TODOS los bookmakers; para la recomendación solo los
+    que pasan el filtro (DGOJ si SPAIN_ONLY=True).
+    """
+    if not settings.THEODDS_API_KEY:
+        return []
+
+    from core.fetcher_theodds import find_world_cup_key, get_events_for_sport
+    from core.value import find_value_bets
+
+    sport_keys = [find_world_cup_key()]
+    if settings.EXTRA_SPORTS:
+        sport_keys += [sk.strip() for sk in settings.EXTRA_SPORTS.split(",") if sk.strip()]
+
+    all_events: list[dict] = []
+    for sport_key in sport_keys:
+        try:
+            all_events += get_events_for_sport(sport_key)
+        except Exception as e:
+            logger.warning(f"TheOddsAPI ({sport_key}) no disponible para value bets: {e}")
+
+    if not all_events:
+        return []
+
+    return find_value_bets(all_events, bookmaker_filter=_bookmaker_filter())
 
 
 # ── Scan principal ────────────────────────────────────────────────────────────

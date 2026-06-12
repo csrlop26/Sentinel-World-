@@ -3,7 +3,7 @@ import logging
 import requests
 
 from config.settings import settings
-from data.models import ArbOpportunity, MiddleOpportunity
+from data.models import ArbOpportunity, MiddleOpportunity, ValueBet
 
 logger = logging.getLogger(__name__)
 
@@ -209,12 +209,49 @@ def format_middle_alert(opp: MiddleOpportunity) -> str:
     return "\n".join(lines)
 
 
+def format_value_alert(vb: ValueBet) -> str:
+    true_pct = round(vb.true_prob * 100, 1)
+    implied_pct = round(100 / vb.odds, 1)
+
+    lines = [
+        f"📊 <b>VALUE BET +{vb.edge_pct:.1f}% — {_html(vb.market)}</b>",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"⚽ <b>{_html(vb.event_name)}</b>",
+    ]
+    if vb.league:
+        lines.append(f"🏅 {_html(vb.league)}")
+    if vb.commence_time:
+        lines.append(f"📅 {_html(vb.commence_time)}")
+
+    lines += [
+        "",
+        f"🎯 Apuesta: <b>{_html(vb.outcome)}</b>",
+        f"🏪 Casa: <b>{_html(vb.bookmaker)}</b>",
+        f"💲 Cuota: <b>{vb.odds}</b>",
+        "",
+        "📊 <b>ANÁLISIS DE VALOR</b>",
+        f"  Prob. real ({_html(vb.sharp_ref)}): <b>{true_pct}%</b>",
+        f"  Prob. implícita en casa: {implied_pct}%",
+        f"  Edge: <b>+{vb.edge_pct:.1f}%</b>",
+        "",
+        f"💰 <b>STAKE (¼ Kelly)</b>",
+        f"  Apostar: <b>€{vb.stake:.2f}</b>  ({vb.kelly_pct:.1f}% bankroll)",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "⚡ <i>Actúa antes del partido</i>",
+    ]
+    return "\n".join(lines)
+
+
 def send_alert(opp: ArbOpportunity) -> bool:
     return _send(format_alert(opp))
 
 
 def send_middle_alert(opp: MiddleOpportunity) -> bool:
     return _send(format_middle_alert(opp))
+
+
+def send_value_alert(vb: ValueBet) -> bool:
+    return _send(format_value_alert(vb))
 
 
 def send_startup() -> bool:
@@ -227,11 +264,12 @@ def send_startup() -> bool:
         f"⏱ Intervalo: <b>{settings.SCAN_INTERVAL}s</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "📨 <b>Comandos disponibles:</b>\n"
+        "  /value  — buscar value bets (+EV) ahora\n"
         "  /middle — buscar ventanas de goles ahora\n"
         "  /arb    — forzar escaneo de arbitrajes\n"
         "  /status — ver estado del bot\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "<i>Recibirás alertas automáticas de arbitraje</i>"
+        "<i>Recibirás alertas automáticas de arbitraje y value bets</i>"
     )
     return _send(text)
 
